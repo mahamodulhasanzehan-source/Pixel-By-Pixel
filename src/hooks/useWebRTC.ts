@@ -33,6 +33,8 @@ export function useWebRTC() {
   const receivedSizeRef = useRef<number>(0);
   const currentReceivingFileRef = useRef<FileInfo | null>(null);
   const lastSpeedCalcRef = useRef<{ time: number; bytes: number }>({ time: 0, bytes: 0 });
+  const totalBytesTransferredRef = useRef<number>(0);
+  const fileAckRef = useRef<string | null>(null);
 
   const directoryHandleRef = useRef<any>(null);
   const useShareRef = useRef<boolean>(false);
@@ -87,10 +89,20 @@ export function useWebRTC() {
           receivedSizeRef.current = 0;
         } else if (data.type === 'eof') {
           saveReceivedFile();
+        } else if (data.type === 'file-saved') {
+          fileAckRef.current = data.fileId;
         } else if (data.type === 'cancel') {
           setError('Transfer cancelled by the other party');
           setState('error');
           cleanupConnection();
+        } else if (data.type === 'graceful-close') {
+          cleanupConnection();
+          setState('idle');
+          setCode(null);
+          setFiles([]);
+          setFilesInfo([]);
+          setProgress({});
+          setSpeed(0);
         }
       } else if (data instanceof ArrayBuffer || data instanceof Uint8Array) {
         // Binary chunk
@@ -127,6 +139,9 @@ export function useWebRTC() {
     setIsSender(true);
     setFiles(selectedFiles);
     setState('creating');
+    totalBytesTransferredRef.current = 0;
+    lastSpeedCalcRef.current = { time: Date.now(), bytes: 0 };
+    fileAckRef.current = null;
 
     const info = selectedFiles.map((f, i) => ({
       id: `file-${i}`,
@@ -175,6 +190,9 @@ export function useWebRTC() {
     setIsSender(false);
     setCode(sessionCode);
     setState('connecting');
+    totalBytesTransferredRef.current = 0;
+    lastSpeedCalcRef.current = { time: Date.now(), bytes: 0 };
+    fileAckRef.current = null;
 
     const peer = new Peer();
     peerRef.current = peer;
@@ -220,15 +238,23 @@ export function useWebRTC() {
 
       await new Promise(resolve => setTimeout(resolve, 50));
 
-      const chunkSize = 64 * 1024;
+      const chunkSize = 128 * 1024; // 128KB chunks for better throughput
       let offset = 0;
+      const previousTotal = totalBytesTransferredRef.current;
 
       while (offset < file.size) {
         if (!connRef.current || !connRef.current.open) {
           throw new Error('Data channel closed during transfer');
         }
 
-        // PeerJS handles buffering internally, but we can still chunk
+        // Implement backpressure to prevent sender from overwhelming the buffer
+        // and to show accurate progress.
+        const dataChannel = (connRef.current as any).dataChannel;
+        if (dataChannel && dataChannel.bufferedAmount > 1024 * 1024 * 8) { // 8MB buffer limit
+          await new Promise(resolve => setTimeout(resolve, 10));
+          continue;
+        }
+
         const chunk = file.slice(offset, offset + chunkSize);
         const buffer = await chunk.arrayBuffer();
         connRef.current.send(buffer);
@@ -243,10 +269,17 @@ export function useWebRTC() {
           }
         }));
 
-        updateSpeed(offset);
-        
-        // Small delay to prevent overwhelming the connection
-        await new Promise(resolve => setTimeout(resolve, 1));
+        totalBytesTransferredRef.current = previousTotal + offset;
+        updateSpeed(totalBytesTransferredRef.current);
+      }
+
+      // Wait for the buffer to drain completely before sending EOF
+      // This ensures the receiver has actually received all the bytes before we mark it complete
+      const dataChannel = (connRef.current as any).dataChannel;
+      if (dataChannel) {
+        while (dataChannel.bufferedAmount > 0) {
+          await new Promise(resolve => setTimeout(resolve, 10));
+        }
       }
 
       connRef.current.send({ type: 'eof', fileId: fileInfo.id });
@@ -258,6 +291,12 @@ export function useWebRTC() {
           completed: true,
         }
       }));
+
+      // Wait for receiver to acknowledge the file is saved
+      while (fileAckRef.current !== fileInfo.id) {
+        if (!connRef.current || !connRef.current.open) break;
+        await new Promise(resolve => setTimeout(resolve, 10));
+      }
     }
 
     setState('completed');
@@ -267,6 +306,7 @@ export function useWebRTC() {
     if (currentReceivingFileRef.current) {
       receiveBufferRef.current.push(data);
       receivedSizeRef.current += data.byteLength;
+      totalBytesTransferredRef.current += data.byteLength;
 
       const fileId = currentReceivingFileRef.current.id;
       setProgress(prev => ({
@@ -277,7 +317,7 @@ export function useWebRTC() {
         }
       }));
 
-      updateSpeed(receivedSizeRef.current);
+      updateSpeed(totalBytesTransferredRef.current);
     }
   };
 
@@ -339,16 +379,22 @@ export function useWebRTC() {
       return prev;
     });
 
-    currentReceivingFileRef.current = null;
-    receiveBufferRef.current = [];
-    receivedSizeRef.current = 0;
+    if (connRef.current && connRef.current.open) {
+      connRef.current.send({ type: 'file-saved', fileId: fileInfo.id });
+    }
+
+    if (currentReceivingFileRef.current?.id === fileInfo.id) {
+      currentReceivingFileRef.current = null;
+      receiveBufferRef.current = [];
+      receivedSizeRef.current = 0;
+    }
   };
 
   const updateSpeed = (currentBytes: number) => {
     const now = Date.now();
     const { time: lastTime, bytes: lastBytes } = lastSpeedCalcRef.current;
     
-    if (now - lastTime > 1000) {
+    if (now - lastTime > 500) {
       const speedBps = ((currentBytes - lastBytes) / (now - lastTime)) * 1000;
       setSpeed(speedBps);
       lastSpeedCalcRef.current = { time: now, bytes: currentBytes };
@@ -357,7 +403,11 @@ export function useWebRTC() {
 
   const cancelTransfer = useCallback((keepFiles = false) => {
     if (connRef.current && connRef.current.open) {
-      connRef.current.send({ type: 'cancel' });
+      if (stateRef.current === 'completed') {
+        connRef.current.send({ type: 'graceful-close' });
+      } else {
+        connRef.current.send({ type: 'cancel' });
+      }
     }
     cleanupConnection();
     setState('idle');
@@ -369,6 +419,9 @@ export function useWebRTC() {
     setProgress({});
     setError(null);
     setSpeed(0);
+    totalBytesTransferredRef.current = 0;
+    lastSpeedCalcRef.current = { time: Date.now(), bytes: 0 };
+    fileAckRef.current = null;
   }, [cleanupConnection]);
 
   return {

@@ -25,15 +25,26 @@ function formatTime(seconds: number) {
 }
 
 const Doodles = () => (
-  <svg className="fixed inset-0 z-[-1] w-full h-full opacity-[0.03] pointer-events-none" xmlns="http://www.w3.org/2000/svg">
-    <pattern id="doodles" x="0" y="0" width="100" height="100" patternUnits="userSpaceOnUse">
-      <path d="M 10 10 L 20 20 M 20 10 L 10 20" stroke="white" strokeWidth="2" strokeLinecap="round"/>
-      <circle cx="50" cy="20" r="3" fill="none" stroke="white" strokeWidth="2"/>
-      <path d="M 80 15 Q 90 5 100 15" fill="none" stroke="white" strokeWidth="2" strokeLinecap="round"/>
-      <rect x="15" y="60" width="8" height="8" fill="none" stroke="white" strokeWidth="2" transform="rotate(45 19 64)"/>
-      <path d="M 40 80 C 50 70 70 70 80 80" fill="none" stroke="white" strokeWidth="2" strokeLinecap="round"/>
-      <circle cx="90" cy="60" r="1.5" fill="white"/>
-      <circle cx="30" cy="40" r="2" fill="white"/>
+  <svg className="fixed inset-0 z-[-1] w-full h-full opacity-[0.05] pointer-events-none" xmlns="http://www.w3.org/2000/svg">
+    <pattern id="doodles" x="0" y="0" width="120" height="120" patternUnits="userSpaceOnUse">
+      {/* Cross */}
+      <path d="M 15 15 L 25 25 M 25 15 L 15 25" stroke="white" strokeWidth="2" strokeLinecap="round"/>
+      {/* Circle */}
+      <circle cx="60" cy="20" r="4" fill="none" stroke="white" strokeWidth="2"/>
+      {/* Squiggle */}
+      <path d="M 90 15 Q 100 5 110 15 T 130 15" fill="none" stroke="white" strokeWidth="2" strokeLinecap="round"/>
+      {/* Square */}
+      <rect x="20" y="70" width="10" height="10" fill="none" stroke="white" strokeWidth="2" transform="rotate(15 25 75)"/>
+      {/* Arc */}
+      <path d="M 50 90 C 60 80 80 80 90 90" fill="none" stroke="white" strokeWidth="2" strokeLinecap="round"/>
+      {/* Dots */}
+      <circle cx="100" cy="70" r="2" fill="white"/>
+      <circle cx="40" cy="50" r="2" fill="white"/>
+      <circle cx="80" cy="40" r="1.5" fill="white"/>
+      {/* Triangle */}
+      <polygon points="10,50 15,40 20,50" fill="none" stroke="white" strokeWidth="2" strokeLinejoin="round"/>
+      {/* Plus */}
+      <path d="M 100 100 L 100 110 M 95 105 L 105 105" stroke="white" strokeWidth="2" strokeLinecap="round"/>
     </pattern>
     <rect x="0" y="0" width="100%" height="100%" fill="url(#doodles)" />
   </svg>
