@@ -35,6 +35,8 @@ export function useWebRTC() {
   const lastSpeedCalcRef = useRef<{ time: number; bytes: number }>({ time: 0, bytes: 0 });
   const totalBytesTransferredRef = useRef<number>(0);
   const fileAckRef = useRef<string | null>(null);
+  const fileWritableRef = useRef<any>(null);
+  const writeQueueRef = useRef<Promise<void>>(Promise.resolve());
 
   const directoryHandleRef = useRef<any>(null);
   const useShareRef = useRef<boolean>(false);
@@ -87,8 +89,36 @@ export function useWebRTC() {
           currentReceivingFileRef.current = data.file;
           receiveBufferRef.current = [];
           receivedSizeRef.current = 0;
+          
+          if (directoryHandleRef.current) {
+            writeQueueRef.current = writeQueueRef.current.then(async () => {
+              try {
+                const fileHandle = await directoryHandleRef.current.getFileHandle(data.file.name, { create: true });
+                fileWritableRef.current = await fileHandle.createWritable();
+              } catch (e) {
+                console.error('Failed to create writable:', e);
+                fileWritableRef.current = null;
+              }
+            });
+          }
         } else if (data.type === 'eof') {
-          saveReceivedFile();
+          if (directoryHandleRef.current) {
+            writeQueueRef.current = writeQueueRef.current.then(async () => {
+              if (fileWritableRef.current) {
+                try {
+                  await fileWritableRef.current.close();
+                } catch (e) {
+                  console.error('Error closing writable:', e);
+                }
+                fileWritableRef.current = null;
+                await finishFileReceive();
+              } else {
+                await saveReceivedFileMemory();
+              }
+            });
+          } else {
+            saveReceivedFileMemory();
+          }
         } else if (data.type === 'file-saved') {
           fileAckRef.current = data.fileId;
         } else if (data.type === 'cancel') {
@@ -276,11 +306,9 @@ export function useWebRTC() {
       // Wait for the buffer to drain completely before sending EOF
       // This ensures the receiver has actually received all the bytes before we mark it complete
       const dataChannel = (connRef.current as any).dataChannel;
-      if (dataChannel) {
-        while (dataChannel.bufferedAmount > 0) {
-          await new Promise(resolve => setTimeout(resolve, 10));
-        }
-      }
+      // We don't need to wait for bufferedAmount to be 0 here because the EOF message 
+      // is sent on the same ordered data channel and will arrive after the data chunks.
+      // We rely on the receiver's 'file-saved' ack instead.
 
       connRef.current.send({ type: 'eof', fileId: fileInfo.id });
       
@@ -304,7 +332,22 @@ export function useWebRTC() {
 
   const handleReceiveMessage = (data: ArrayBuffer) => {
     if (currentReceivingFileRef.current) {
-      receiveBufferRef.current.push(data);
+      if (directoryHandleRef.current) {
+        writeQueueRef.current = writeQueueRef.current.then(async () => {
+          if (fileWritableRef.current) {
+            try {
+              await fileWritableRef.current.write(data);
+            } catch (e) {
+              console.error('Write error:', e);
+            }
+          } else {
+            receiveBufferRef.current.push(data);
+          }
+        });
+      } else {
+        receiveBufferRef.current.push(data);
+      }
+      
       receivedSizeRef.current += data.byteLength;
       totalBytesTransferredRef.current += data.byteLength;
 
@@ -332,36 +375,9 @@ export function useWebRTC() {
     URL.revokeObjectURL(url);
   };
 
-  const saveReceivedFile = async () => {
+  const finishFileReceive = async () => {
     if (!currentReceivingFileRef.current) return;
-
     const fileInfo = currentReceivingFileRef.current;
-    const blob = new Blob(receiveBufferRef.current, { type: fileInfo.type });
-    
-    if (directoryHandleRef.current) {
-      try {
-        const fileHandle = await directoryHandleRef.current.getFileHandle(fileInfo.name, { create: true });
-        const writable = await fileHandle.createWritable();
-        await writable.write(blob);
-        await writable.close();
-      } catch (e) {
-        console.error('Error saving to directory:', e);
-        fallbackDownload(blob, fileInfo.name);
-      }
-    } else if (useShareRef.current && navigator.share) {
-      try {
-        const file = new File([blob], fileInfo.name, { type: fileInfo.type });
-        await navigator.share({
-          files: [file],
-          title: fileInfo.name,
-        });
-      } catch (e) {
-        console.error('Error sharing:', e);
-        fallbackDownload(blob, fileInfo.name);
-      }
-    } else {
-      fallbackDownload(blob, fileInfo.name);
-    }
 
     setProgress(prev => ({
       ...prev,
@@ -383,11 +399,37 @@ export function useWebRTC() {
       connRef.current.send({ type: 'file-saved', fileId: fileInfo.id });
     }
 
-    if (currentReceivingFileRef.current?.id === fileInfo.id) {
-      currentReceivingFileRef.current = null;
-      receiveBufferRef.current = [];
-      receivedSizeRef.current = 0;
+    currentReceivingFileRef.current = null;
+    receiveBufferRef.current = [];
+    receivedSizeRef.current = 0;
+  };
+
+  const saveReceivedFileMemory = async () => {
+    if (!currentReceivingFileRef.current) return;
+    const fileInfo = currentReceivingFileRef.current;
+
+    try {
+      const blob = new Blob(receiveBufferRef.current, { type: fileInfo.type });
+      
+      if (useShareRef.current && navigator.share) {
+        try {
+          const file = new File([blob], fileInfo.name, { type: fileInfo.type });
+          await navigator.share({
+            files: [file],
+            title: fileInfo.name,
+          });
+        } catch (e) {
+          console.error('Error sharing:', e);
+          fallbackDownload(blob, fileInfo.name);
+        }
+      } else {
+        fallbackDownload(blob, fileInfo.name);
+      }
+    } catch (e) {
+      console.error('Error creating blob or downloading:', e);
     }
+
+    await finishFileReceive();
   };
 
   const updateSpeed = (currentBytes: number) => {
