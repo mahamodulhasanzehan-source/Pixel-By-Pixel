@@ -1,0 +1,5 @@
+{
+  "name": "Pixel by Pixel",
+  "description": "Browser-based file transfer website using WebRTC for fast, secure device-to-device sharing.",
+  "requestFramePermissions": ["camera"]
+}
