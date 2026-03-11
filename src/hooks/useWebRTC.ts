@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { io, Socket } from 'socket.io-client';
+import Peer, { DataConnection } from 'peerjs';
 
 export type TransferState = 'idle' | 'creating' | 'waiting' | 'confirming' | 'connecting' | 'transferring' | 'completed' | 'error';
 
@@ -27,9 +27,8 @@ export function useWebRTC() {
   const [speed, setSpeed] = useState<number>(0);
   const [isSender, setIsSender] = useState<boolean>(false);
 
-  const socketRef = useRef<Socket | null>(null);
-  const peerConnectionRef = useRef<RTCPeerConnection | null>(null);
-  const dataChannelRef = useRef<RTCDataChannel | null>(null);
+  const peerRef = useRef<Peer | null>(null);
+  const connRef = useRef<DataConnection | null>(null);
   const receiveBufferRef = useRef<ArrayBuffer[]>([]);
   const receivedSizeRef = useRef<number>(0);
   const currentReceivingFileRef = useRef<FileInfo | null>(null);
@@ -37,202 +36,94 @@ export function useWebRTC() {
 
   const directoryHandleRef = useRef<any>(null);
   const useShareRef = useRef<boolean>(false);
-  const readyToSendRef = useRef<boolean>(false);
-
-  useEffect(() => {
-    // Use VITE_WS_URL if provided (e.g., for Vercel deployment), else fallback to origin
-    const socketUrl = import.meta.env.VITE_WS_URL || window.location.origin;
-    socketRef.current = io(socketUrl);
-
-    socketRef.current.on('connect', () => {
-      console.log('Connected to signaling server');
-    });
-
-    socketRef.current.on('receiver-joined', async ({ receiverId }) => {
-      console.log('Receiver joined, initiating WebRTC connection');
-      setState('connecting');
-      await initiateConnection(receiverId);
-    });
-
-    socketRef.current.on('webrtc-offer', async ({ sender, offer }) => {
-      console.log('Received WebRTC offer');
-      await handleOffer(sender, offer);
-    });
-
-    socketRef.current.on('webrtc-answer', async ({ sender, answer }) => {
-      console.log('Received WebRTC answer');
-      await handleAnswer(answer);
-    });
-
-    socketRef.current.on('webrtc-ice-candidate', async ({ sender, candidate }) => {
-      console.log('Received ICE candidate');
-      await handleIceCandidate(candidate);
-    });
-
-    socketRef.current.on('session-closed', () => {
-      if (state !== 'completed' && state !== 'idle') {
-        setError('Session closed by the other party');
-        setState('error');
-      }
-    });
-
-    return () => {
-      socketRef.current?.disconnect();
-      cleanupConnection();
-    };
-  }, []);
 
   const cleanupConnection = useCallback(() => {
-    if (dataChannelRef.current) {
-      dataChannelRef.current.close();
-      dataChannelRef.current = null;
+    if (connRef.current) {
+      connRef.current.close();
+      connRef.current = null;
     }
-    if (peerConnectionRef.current) {
-      peerConnectionRef.current.close();
-      peerConnectionRef.current = null;
+    if (peerRef.current) {
+      peerRef.current.destroy();
+      peerRef.current = null;
     }
-    readyToSendRef.current = false;
   }, []);
 
-  const createPeerConnection = (targetId: string) => {
-    const pc = new RTCPeerConnection({
-      iceServers: [
-        { urls: 'stun:stun.l.google.com:19302' },
-        { urls: 'stun:stun1.l.google.com:19302' },
-      ],
-    });
+  useEffect(() => {
+    return () => {
+      cleanupConnection();
+    };
+  }, [cleanupConnection]);
 
-    pc.onicecandidate = (event) => {
-      if (event.candidate) {
-        socketRef.current?.emit('webrtc-ice-candidate', {
-          target: targetId,
-          candidate: event.candidate,
+  const setupConnection = (conn: DataConnection, isSenderSide: boolean) => {
+    connRef.current = conn;
+
+    conn.on('open', () => {
+      console.log('Data connection open');
+      if (isSenderSide) {
+        // Sender sends file info when receiver connects
+        conn.send({
+          type: 'files-info',
+          filesInfo: filesInfoRef.current,
         });
       }
-    };
+    });
 
-    pc.onconnectionstatechange = () => {
-      console.log('Connection state:', pc.connectionState);
-      if (pc.connectionState === 'disconnected' || pc.connectionState === 'failed') {
-        console.log('WebRTC connection failed, falling back to socket relay');
-        setError('Connection lost. Please try again.');
+    conn.on('data', (data: any) => {
+      if (typeof data === 'object' && data.type) {
+        if (data.type === 'files-info' && !isSenderSide) {
+          setFilesInfo(data.filesInfo);
+          const initialProgress: Record<string, FileProgress> = {};
+          data.filesInfo.forEach((f: FileInfo) => {
+            initialProgress[f.id] = { id: f.id, bytesTransferred: 0, totalBytes: f.size, completed: false };
+          });
+          setProgress(initialProgress);
+          setState('confirming');
+        } else if (data.type === 'receiver-ready' && isSenderSide) {
+          setState('transferring');
+          startSendingFiles();
+        } else if (data.type === 'header') {
+          currentReceivingFileRef.current = data.file;
+          receiveBufferRef.current = [];
+          receivedSizeRef.current = 0;
+        } else if (data.type === 'eof') {
+          saveReceivedFile();
+        } else if (data.type === 'cancel') {
+          setError('Transfer cancelled by the other party');
+          setState('error');
+          cleanupConnection();
+        }
+      } else if (data instanceof ArrayBuffer || data instanceof Uint8Array) {
+        // Binary chunk
+        handleReceiveMessage(data as ArrayBuffer);
+      }
+    });
+
+    conn.on('close', () => {
+      console.log('Connection closed');
+      if (stateRef.current !== 'completed' && stateRef.current !== 'idle' && stateRef.current !== 'error') {
+        setError('Connection lost');
         setState('error');
       }
-    };
+    });
 
-    return pc;
-  };
-
-  const setupDataChannel = (channel: RTCDataChannel) => {
-    channel.binaryType = 'arraybuffer';
-
-    channel.onopen = () => {
-      console.log('Data channel open');
-      if (!isSender && readyToSendRef.current) {
-        channel.send(JSON.stringify({ type: 'receiver-ready' }));
-        setState('transferring');
-      }
-    };
-
-    channel.onclose = () => {
-      console.log('Data channel closed');
-    };
-
-    channel.onmessage = (event) => {
-      if (typeof event.data === 'string') {
-        try {
-          const message = JSON.parse(event.data);
-          if (message.type === 'receiver-ready' && isSender) {
-            setState('transferring');
-            startSendingFiles();
-          } else if (message.type === 'header') {
-            currentReceivingFileRef.current = message.file;
-            receiveBufferRef.current = [];
-            receivedSizeRef.current = 0;
-          } else if (message.type === 'eof') {
-            saveReceivedFile();
-          }
-        } catch (e) {
-          console.error('Error parsing message:', e);
-        }
-      } else {
-        // Binary chunk
-        handleReceiveMessage(event.data);
-      }
-    };
-
-    dataChannelRef.current = channel;
-  };
-
-  const initiateConnection = async (targetId: string) => {
-    try {
-      const pc = createPeerConnection(targetId);
-      peerConnectionRef.current = pc;
-
-      const channel = pc.createDataChannel('file-transfer', {
-        ordered: true,
-      });
-      setupDataChannel(channel);
-
-      const offer = await pc.createOffer();
-      await pc.setLocalDescription(offer);
-
-      socketRef.current?.emit('webrtc-offer', {
-        target: targetId,
-        offer,
-      });
-    } catch (err) {
-      console.error('Error initiating connection:', err);
-      setError('Failed to initiate connection');
+    conn.on('error', (err) => {
+      console.error('Connection error:', err);
+      setError('Connection error occurred');
       setState('error');
-    }
+    });
   };
 
-  const handleOffer = async (senderId: string, offer: any) => {
-    try {
-      const pc = createPeerConnection(senderId);
-      peerConnectionRef.current = pc;
+  // Refs to access latest state in callbacks
+  const stateRef = useRef(state);
+  const filesInfoRef = useRef(filesInfo);
+  const filesRef = useRef(files);
 
-      pc.ondatachannel = (event) => {
-        setupDataChannel(event.channel);
-      };
-
-      await pc.setRemoteDescription(new RTCSessionDescription(offer));
-      const answer = await pc.createAnswer();
-      await pc.setLocalDescription(answer);
-
-      socketRef.current?.emit('webrtc-answer', {
-        target: senderId,
-        answer,
-      });
-    } catch (err) {
-      console.error('Error handling offer:', err);
-      setError('Failed to establish connection');
-      setState('error');
-    }
-  };
-
-  const handleAnswer = async (answer: any) => {
-    try {
-      if (peerConnectionRef.current) {
-        await peerConnectionRef.current.setRemoteDescription(new RTCSessionDescription(answer));
-      }
-    } catch (err) {
-      console.error('Error handling answer:', err);
-    }
-  };
-
-  const handleIceCandidate = async (candidate: any) => {
-    try {
-      if (peerConnectionRef.current) {
-        await peerConnectionRef.current.addIceCandidate(new RTCIceCandidate(candidate));
-      }
-    } catch (err) {
-      console.error('Error adding ICE candidate:', err);
-    }
-  };
+  useEffect(() => { stateRef.current = state; }, [state]);
+  useEffect(() => { filesInfoRef.current = filesInfo; }, [filesInfo]);
+  useEffect(() => { filesRef.current = files; }, [files]);
 
   const startSession = (selectedFiles: File[]) => {
+    cleanupConnection();
     setIsSender(true);
     setFiles(selectedFiles);
     setState('creating');
@@ -251,10 +142,27 @@ export function useWebRTC() {
     });
     setProgress(initialProgress);
 
-    socketRef.current?.emit('create-session', { filesInfo: info }, (response: any) => {
-      if (response.code) {
-        setCode(response.code);
-        setState('waiting');
+    // Generate 6 digit code
+    const newCode = Math.floor(100000 + Math.random() * 900000).toString();
+    const peerId = `pxl-transfer-${newCode}`;
+
+    const peer = new Peer(peerId);
+    peerRef.current = peer;
+
+    peer.on('open', (id) => {
+      setCode(newCode);
+      setState('waiting');
+    });
+
+    peer.on('connection', (conn) => {
+      setupConnection(conn, true);
+    });
+
+    peer.on('error', (err) => {
+      console.error('Peer error:', err);
+      if (err.type === 'unavailable-id') {
+        // Try again with a new code
+        startSession(selectedFiles);
       } else {
         setError('Failed to create session');
         setState('error');
@@ -263,49 +171,52 @@ export function useWebRTC() {
   };
 
   const joinSession = (sessionCode: string) => {
+    cleanupConnection();
     setIsSender(false);
     setCode(sessionCode);
-    setState('confirming');
+    setState('connecting');
 
-    socketRef.current?.emit('join-session', sessionCode, (response: any) => {
-      if (response.success) {
-        setFilesInfo(response.filesInfo);
-        const initialProgress: Record<string, FileProgress> = {};
-        response.filesInfo.forEach((f: FileInfo) => {
-          initialProgress[f.id] = { id: f.id, bytesTransferred: 0, totalBytes: f.size, completed: false };
-        });
-        setProgress(initialProgress);
-      } else {
-        setError(response.error || 'Failed to join session');
-        setState('error');
-      }
+    const peer = new Peer();
+    peerRef.current = peer;
+
+    peer.on('open', () => {
+      const conn = peer.connect(`pxl-transfer-${sessionCode}`, {
+        reliable: true,
+      });
+      setupConnection(conn, false);
+    });
+
+    peer.on('error', (err) => {
+      console.error('Peer error:', err);
+      setError('Failed to connect to sender');
+      setState('error');
     });
   };
 
   const acceptTransfer = async (handle?: any, useShare?: boolean) => {
     directoryHandleRef.current = handle || null;
     useShareRef.current = useShare || false;
-    readyToSendRef.current = true;
     
-    if (dataChannelRef.current?.readyState === 'open') {
-      dataChannelRef.current.send(JSON.stringify({ type: 'receiver-ready' }));
+    if (connRef.current && connRef.current.open) {
+      connRef.current.send({ type: 'receiver-ready' });
       setState('transferring');
     } else {
-      setState('connecting');
+      setError('Connection lost');
+      setState('error');
     }
   };
 
   const startSendingFiles = async () => {
-    if (!dataChannelRef.current) return;
+    if (!connRef.current) return;
 
-    for (let i = 0; i < files.length; i++) {
-      const file = files[i];
-      const fileInfo = filesInfo[i];
+    for (let i = 0; i < filesRef.current.length; i++) {
+      const file = filesRef.current[i];
+      const fileInfo = filesInfoRef.current[i];
 
-      dataChannelRef.current.send(JSON.stringify({
+      connRef.current.send({
         type: 'header',
         file: fileInfo,
-      }));
+      });
 
       await new Promise(resolve => setTimeout(resolve, 50));
 
@@ -313,18 +224,14 @@ export function useWebRTC() {
       let offset = 0;
 
       while (offset < file.size) {
-        if (dataChannelRef.current.readyState !== 'open') {
+        if (!connRef.current || !connRef.current.open) {
           throw new Error('Data channel closed during transfer');
         }
 
-        if (dataChannelRef.current.bufferedAmount > 1024 * 1024 * 10) {
-          await new Promise(resolve => setTimeout(resolve, 50));
-          continue;
-        }
-
+        // PeerJS handles buffering internally, but we can still chunk
         const chunk = file.slice(offset, offset + chunkSize);
         const buffer = await chunk.arrayBuffer();
-        dataChannelRef.current.send(buffer);
+        connRef.current.send(buffer);
 
         offset += buffer.byteLength;
 
@@ -337,9 +244,12 @@ export function useWebRTC() {
         }));
 
         updateSpeed(offset);
+        
+        // Small delay to prevent overwhelming the connection
+        await new Promise(resolve => setTimeout(resolve, 1));
       }
 
-      dataChannelRef.current.send(JSON.stringify({ type: 'eof', fileId: fileInfo.id }));
+      connRef.current.send({ type: 'eof', fileId: fileInfo.id });
       
       setProgress(prev => ({
         ...prev,
@@ -446,10 +356,10 @@ export function useWebRTC() {
   };
 
   const cancelTransfer = useCallback((keepFiles = false) => {
-    cleanupConnection();
-    if (code) {
-      socketRef.current?.emit('cancel-session', code);
+    if (connRef.current && connRef.current.open) {
+      connRef.current.send({ type: 'cancel' });
     }
+    cleanupConnection();
     setState('idle');
     setCode(null);
     if (!keepFiles) {
@@ -459,7 +369,7 @@ export function useWebRTC() {
     setProgress({});
     setError(null);
     setSpeed(0);
-  }, [code, cleanupConnection]);
+  }, [cleanupConnection]);
 
   return {
     state,
