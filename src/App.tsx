@@ -72,6 +72,7 @@ export default function App() {
     joinSession,
     acceptTransfer,
     cancelTransfer,
+    receivedFiles,
   } = useWebRTC();
 
   const resetAll = useCallback(() => {
@@ -167,7 +168,6 @@ export default function App() {
   };
 
   const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
-  const allImages = filesInfo.length > 0 && filesInfo.every(f => f.type.startsWith('image/'));
 
   const handleSaveToFolders = async () => {
     if ('showDirectoryPicker' in window) {
@@ -445,21 +445,13 @@ export default function App() {
                 </p>
 
                 <div className="space-y-4">
-                  {isMobile && allImages ? (
-                    <>
-                      <button
-                        onClick={() => acceptTransfer(undefined, true)}
-                        className="w-full py-4 bg-blue-600 hover:bg-blue-500 text-white rounded-xl font-medium transition-all"
-                      >
-                        Save to Photos
-                      </button>
-                      <button
-                        onClick={handleSaveToFolders}
-                        className="w-full py-4 bg-slate-800 hover:bg-slate-700 text-white rounded-xl font-medium transition-all"
-                      >
-                        Save to Folders
-                      </button>
-                    </>
+                  {isMobile ? (
+                    <button
+                      onClick={() => acceptTransfer()}
+                      className="w-full py-4 bg-blue-600 hover:bg-blue-500 text-white rounded-xl font-medium transition-all"
+                    >
+                      Accept Transfer
+                    </button>
                   ) : (
                     <button
                       onClick={handleSaveToFolders}
@@ -626,12 +618,68 @@ export default function App() {
                   })}
                 </div>
 
+                {state === 'completed' && !isSender && receivedFiles.length > 0 && (
+                  <div className="mt-8 space-y-4">
+                    {isMobile && (
+                      <button
+                        onClick={async () => {
+                          const files = receivedFiles.map(rf => new File([rf.blob], rf.info.name, { type: rf.info.type }));
+                          if (navigator.canShare && navigator.canShare({ files })) {
+                            try {
+                              await navigator.share({ files, title: 'Saved from Pixel by Pixel' });
+                            } catch (e) {
+                              console.error('Share failed', e);
+                            }
+                          } else {
+                            // Fallback to sharing one by one if batch fails
+                            for (const file of files) {
+                              if (navigator.canShare && navigator.canShare({ files: [file] })) {
+                                try {
+                                  await navigator.share({ files: [file] });
+                                } catch (e) {
+                                  console.error('Share failed for', file.name, e);
+                                }
+                              }
+                            }
+                          }
+                        }}
+                        className="w-full py-4 bg-blue-600 hover:bg-blue-500 text-white rounded-xl font-medium transition-all flex items-center justify-center gap-2 shadow-[0_0_20px_rgba(37,99,235,0.3)] hover:shadow-[0_0_25px_rgba(37,99,235,0.5)]"
+                      >
+                        <Download className="w-5 h-5" />
+                        Save to Photos
+                      </button>
+                    )}
+                    <button
+                      onClick={() => {
+                        receivedFiles.forEach(rf => {
+                          const url = URL.createObjectURL(rf.blob);
+                          const a = document.createElement('a');
+                          a.href = url;
+                          a.download = rf.info.name;
+                          document.body.appendChild(a);
+                          a.click();
+                          document.body.removeChild(a);
+                          setTimeout(() => URL.revokeObjectURL(url), 1000);
+                        });
+                      }}
+                      className={`w-full py-4 rounded-xl font-medium transition-all flex items-center justify-center gap-2 ${
+                        isMobile 
+                          ? 'bg-slate-800 hover:bg-slate-700 text-white' 
+                          : 'bg-blue-600 hover:bg-blue-500 text-white shadow-[0_0_20px_rgba(37,99,235,0.3)]'
+                      }`}
+                    >
+                      <FileIcon className="w-5 h-5" />
+                      Save to Files
+                    </button>
+                  </div>
+                )}
+
                 <div className="mt-8 pt-6 border-t border-slate-800 text-center">
                   <button
                     onClick={resetAll}
                     className={`px-8 py-3 rounded-xl font-medium transition-colors ${
                       state === 'completed'
-                        ? 'bg-blue-600 hover:bg-blue-500 text-white'
+                        ? 'bg-transparent hover:bg-slate-800 text-slate-400 hover:text-white'
                         : 'bg-slate-800 hover:bg-slate-700 text-white'
                     }`}
                   >

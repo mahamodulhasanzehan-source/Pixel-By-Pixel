@@ -26,6 +26,7 @@ export function useWebRTC() {
   const [error, setError] = useState<string | null>(null);
   const [speed, setSpeed] = useState<number>(0);
   const [isSender, setIsSender] = useState<boolean>(false);
+  const [receivedFiles, setReceivedFiles] = useState<{info: FileInfo, blob: Blob}[]>([]);
 
   const peerRef = useRef<Peer | null>(null);
   const connRef = useRef<DataConnection | null>(null);
@@ -39,7 +40,6 @@ export function useWebRTC() {
   const writeQueueRef = useRef<Promise<void>>(Promise.resolve());
 
   const directoryHandleRef = useRef<any>(null);
-  const useShareRef = useRef<boolean>(false);
 
   const cleanupConnection = useCallback(() => {
     if (connRef.current) {
@@ -241,9 +241,8 @@ export function useWebRTC() {
     });
   };
 
-  const acceptTransfer = async (handle?: any, useShare?: boolean) => {
+  const acceptTransfer = async (handle?: any) => {
     directoryHandleRef.current = handle || null;
-    useShareRef.current = useShare || false;
     
     if (connRef.current && connRef.current.open) {
       connRef.current.send({ type: 'receiver-ready' });
@@ -410,19 +409,10 @@ export function useWebRTC() {
 
     try {
       const blob = new Blob(receiveBufferRef.current, { type: fileInfo.type });
+      setReceivedFiles(prev => [...prev, { info: fileInfo, blob }]);
       
-      if (useShareRef.current && navigator.share) {
-        try {
-          const file = new File([blob], fileInfo.name, { type: fileInfo.type });
-          await navigator.share({
-            files: [file],
-            title: fileInfo.name,
-          });
-        } catch (e) {
-          console.error('Error sharing:', e);
-          fallbackDownload(blob, fileInfo.name);
-        }
-      } else {
+      const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+      if (!isMobile) {
         fallbackDownload(blob, fileInfo.name);
       }
     } catch (e) {
@@ -478,5 +468,6 @@ export function useWebRTC() {
     joinSession,
     acceptTransfer,
     cancelTransfer,
+    receivedFiles,
   };
 }
