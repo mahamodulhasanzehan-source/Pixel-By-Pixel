@@ -621,33 +621,38 @@ export default function App() {
                 {state === 'completed' && !isSender && receivedFiles.length > 0 && (
                   <div className="mt-8 space-y-4">
                     {isMobile && (
-                      <button
-                        onClick={async () => {
-                          const files = receivedFiles.map(rf => new File([rf.blob], rf.info.name, { type: rf.info.type }));
-                          if (navigator.canShare && navigator.canShare({ files })) {
-                            try {
-                              await navigator.share({ files, title: 'Saved from Pixel by Pixel' });
-                            } catch (e) {
-                              console.error('Share failed', e);
-                            }
-                          } else {
-                            // Fallback to sharing one by one if batch fails
-                            for (const file of files) {
-                              if (navigator.canShare && navigator.canShare({ files: [file] })) {
-                                try {
-                                  await navigator.share({ files: [file] });
-                                } catch (e) {
-                                  console.error('Share failed for', file.name, e);
+                      <div className="space-y-2">
+                        <button
+                          onClick={async () => {
+                            const files = receivedFiles.map(rf => new File([rf.blob], rf.info.name, { type: rf.info.type }));
+                            if (navigator.canShare && navigator.canShare({ files })) {
+                              try {
+                                await navigator.share({ files, title: 'Saved from Pixel by Pixel' });
+                              } catch (e) {
+                                console.error('Share failed', e);
+                              }
+                            } else {
+                              // Fallback to sharing one by one if batch fails
+                              for (const file of files) {
+                                if (navigator.canShare && navigator.canShare({ files: [file] })) {
+                                  try {
+                                    await navigator.share({ files: [file] });
+                                  } catch (e) {
+                                    console.error('Share failed for', file.name, e);
+                                  }
                                 }
                               }
                             }
-                          }
-                        }}
-                        className="w-full py-4 bg-blue-600 hover:bg-blue-500 text-white rounded-xl font-medium transition-all flex items-center justify-center gap-2 shadow-[0_0_20px_rgba(37,99,235,0.3)] hover:shadow-[0_0_25px_rgba(37,99,235,0.5)]"
-                      >
-                        <Download className="w-5 h-5" />
-                        Save to Photos
-                      </button>
+                          }}
+                          className="w-full py-4 bg-blue-600 hover:bg-blue-500 text-white rounded-xl font-medium transition-all flex items-center justify-center gap-2 shadow-[0_0_20px_rgba(37,99,235,0.3)] hover:shadow-[0_0_25px_rgba(37,99,235,0.5)]"
+                        >
+                          <Download className="w-5 h-5" />
+                          Save to Photos
+                        </button>
+                        <p className="text-xs text-slate-400 text-center px-4">
+                          (Scroll down in the menu and tap <strong>"Save Video"</strong> or <strong>"Save Image"</strong>)
+                        </p>
+                      </div>
                     )}
                     <button
                       onClick={() => {
