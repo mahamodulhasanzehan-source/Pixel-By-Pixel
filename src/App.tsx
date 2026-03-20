@@ -177,21 +177,12 @@ export default function App() {
     setIsSaving(true);
     try {
       if (isMobile && action === 'photos' && navigator.canShare) {
-        const files = [];
-        for (const rf of receivedFiles) {
-          let file = rf.blob;
-          if (rf.blob instanceof File) {
-            try {
-              const buffer = await rf.blob.arrayBuffer();
-              file = new File([buffer], rf.info.name, { type: rf.info.type });
-            } catch (e) {
-              console.warn('Failed to read OPFS file into RAM', e);
-            }
-          } else {
-            file = new File([rf.blob], rf.info.name, { type: rf.info.type });
+        const files = receivedFiles.map(rf => {
+          if (rf.blob instanceof File && rf.blob.name === rf.info.name) {
+            return rf.blob;
           }
-          files.push(file);
-        }
+          return new File([rf.blob], rf.info.name, { type: rf.info.type });
+        });
         
         // Try to share all files at once
         if (navigator.canShare({ files })) {
@@ -224,17 +215,7 @@ export default function App() {
       for (let i = 0; i < receivedFiles.length; i++) {
         const rf = receivedFiles[i];
         
-        let downloadBlob = rf.blob;
-        if (isMobile && rf.blob instanceof File) {
-          try {
-            const buffer = await rf.blob.arrayBuffer();
-            downloadBlob = new Blob([buffer], { type: rf.info.type });
-          } catch (e) {
-            console.warn('Failed to read OPFS file into RAM for download', e);
-          }
-        }
-        
-        const url = URL.createObjectURL(downloadBlob);
+        const url = URL.createObjectURL(rf.blob);
         const a = document.createElement('a');
         a.style.display = 'none';
         a.href = url;
@@ -243,12 +224,14 @@ export default function App() {
         a.click();
         document.body.removeChild(a);
         
-        // Revoke after a long delay to ensure the download completes on mobile
-        setTimeout(() => URL.revokeObjectURL(url), 60000);
+        // Revoke after a long delay to ensure the download completes on mobile.
+        // Android Download Manager runs in a separate process and can take several seconds
+        // to pick up the blob URL. Revoking it too early causes silent download failures.
+        setTimeout(() => URL.revokeObjectURL(url), 300000); // 5 minutes
         
         // Small delay between downloads to prevent browser blocking multiple downloads
         if (i < receivedFiles.length - 1) {
-          await new Promise(resolve => setTimeout(resolve, 300));
+          await new Promise(resolve => setTimeout(resolve, 500));
         }
       }
     } finally {
@@ -778,16 +761,7 @@ export default function App() {
                                 onClick={async () => {
                                   setIsSaving(true);
                                   try {
-                                    let downloadBlob = rf.blob;
-                                    if (isMobile && rf.blob instanceof File) {
-                                      try {
-                                        const buffer = await rf.blob.arrayBuffer();
-                                        downloadBlob = new Blob([buffer], { type: rf.info.type });
-                                      } catch (e) {
-                                        console.warn('Failed to read OPFS file into RAM for download', e);
-                                      }
-                                    }
-                                    const url = URL.createObjectURL(downloadBlob);
+                                    const url = URL.createObjectURL(rf.blob);
                                     const a = document.createElement('a');
                                     a.style.display = 'none';
                                     a.href = url;
@@ -795,7 +769,7 @@ export default function App() {
                                     document.body.appendChild(a);
                                     a.click();
                                     document.body.removeChild(a);
-                                    setTimeout(() => URL.revokeObjectURL(url), 60000);
+                                    setTimeout(() => URL.revokeObjectURL(url), 300000);
                                   } finally {
                                     setIsSaving(false);
                                   }
