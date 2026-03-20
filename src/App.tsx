@@ -198,16 +198,21 @@ export default function App() {
     }
     
     // Fallback standard download for 'files' or if share failed
-    receivedFiles.forEach(rf => {
+    for (let i = 0; i < receivedFiles.length; i++) {
+      const rf = receivedFiles[i];
       const url = URL.createObjectURL(rf.blob);
       const a = document.createElement('a');
+      a.style.display = 'none';
       a.href = url;
       a.download = rf.info.name;
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
-      setTimeout(() => URL.revokeObjectURL(url), 1000);
-    });
+      
+      // Small delay to allow browser to process multiple downloads
+      await new Promise(resolve => setTimeout(resolve, 400));
+      URL.revokeObjectURL(url);
+    }
   };
 
   const handleSaveToFolders = async () => {
@@ -487,22 +492,13 @@ export default function App() {
 
                 <div className="space-y-4">
                   {isMobile ? (
-                    <div className="grid grid-cols-2 gap-3">
-                      <button
-                        onClick={() => { setSavePreference('photos'); acceptTransfer(); }}
-                        className="w-full py-4 bg-blue-600 hover:bg-blue-500 text-white rounded-xl font-medium transition-all flex flex-col items-center justify-center gap-1"
-                      >
-                        <Download className="w-5 h-5" />
-                        <span className="text-sm">Save to Photos</span>
-                      </button>
-                      <button
-                        onClick={() => { setSavePreference('files'); acceptTransfer(); }}
-                        className="w-full py-4 bg-slate-800 hover:bg-slate-700 text-white rounded-xl font-medium transition-all flex flex-col items-center justify-center gap-1"
-                      >
-                        <FileIcon className="w-5 h-5" />
-                        <span className="text-sm">Save to Files</span>
-                      </button>
-                    </div>
+                    <button
+                      onClick={() => { acceptTransfer(); }}
+                      className="w-full py-4 bg-blue-600 hover:bg-blue-500 text-white rounded-xl font-medium transition-all flex items-center justify-center gap-2"
+                    >
+                      <Download className="w-5 h-5" />
+                      Accept Transfer
+                    </button>
                   ) : (
                     <button
                       onClick={() => { setSavePreference('files'); handleSaveToFolders(); }}
@@ -690,7 +686,7 @@ export default function App() {
                       <div className="space-y-2">
                         <button
                           onClick={() => downloadOrShare('photos')}
-                          className={`w-full py-4 rounded-xl font-medium transition-all flex items-center justify-center gap-2 ${savePreference === 'photos' ? 'bg-blue-600 hover:bg-blue-500 text-white shadow-[0_0_20px_rgba(37,99,235,0.3)] hover:shadow-[0_0_25px_rgba(37,99,235,0.5)]' : 'bg-slate-800 hover:bg-slate-700 text-white'}`}
+                          className="w-full py-4 rounded-xl font-medium transition-all flex items-center justify-center gap-2 bg-blue-600 hover:bg-blue-500 text-white shadow-[0_0_20px_rgba(37,99,235,0.3)] hover:shadow-[0_0_25px_rgba(37,99,235,0.5)]"
                         >
                           <Download className="w-5 h-5" />
                           Save to Photos
@@ -704,7 +700,7 @@ export default function App() {
                       <button
                         onClick={() => downloadOrShare('files')}
                         className={`w-full py-4 rounded-xl font-medium transition-all flex items-center justify-center gap-2 ${
-                          savePreference === 'files' || !isMobile 
+                          !isMobile 
                             ? 'bg-blue-600 hover:bg-blue-500 text-white shadow-[0_0_20px_rgba(37,99,235,0.3)] hover:shadow-[0_0_25px_rgba(37,99,235,0.5)]' 
                             : 'bg-slate-800 hover:bg-slate-700 text-white'
                         }`}
@@ -718,6 +714,36 @@ export default function App() {
                         </p>
                       )}
                     </div>
+
+                    {/* Individual files fallback */}
+                    {receivedFiles.length > 1 && (
+                      <div className="pt-4 mt-4 border-t border-slate-800">
+                        <p className="text-sm text-slate-400 text-center mb-3">Or save files individually:</p>
+                        <div className="space-y-2 max-h-[200px] overflow-y-auto custom-scrollbar pr-2">
+                          {receivedFiles.map((rf, idx) => (
+                            <div key={idx} className="flex items-center justify-between bg-slate-950 p-3 rounded-xl border border-slate-800">
+                              <span className="text-sm truncate mr-3 text-slate-300">{rf.info.name}</span>
+                              <button
+                                onClick={() => {
+                                  const url = URL.createObjectURL(rf.blob);
+                                  const a = document.createElement('a');
+                                  a.style.display = 'none';
+                                  a.href = url;
+                                  a.download = rf.info.name;
+                                  document.body.appendChild(a);
+                                  a.click();
+                                  document.body.removeChild(a);
+                                  setTimeout(() => URL.revokeObjectURL(url), 1000);
+                                }}
+                                className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-white rounded-lg text-sm font-medium transition-colors shrink-0"
+                              >
+                                Save
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
                   </div>
                 )}
 
