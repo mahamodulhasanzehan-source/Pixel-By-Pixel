@@ -17,6 +17,22 @@ export interface FileProgress {
   completed: boolean;
 }
 
+const clearOPFS = async () => {
+  try {
+    if (navigator.storage && navigator.storage.getDirectory) {
+      const root = await navigator.storage.getDirectory();
+      // @ts-ignore
+      for await (const [name, handle] of root.entries()) {
+        if (handle.kind === 'file') {
+          await root.removeEntry(name).catch(e => console.warn('Failed to remove OPFS file:', e));
+        }
+      }
+    }
+  } catch (e) {
+    console.warn('Failed to clear OPFS:', e);
+  }
+};
+
 export function useWebRTC() {
   const [state, setState] = useState<TransferState>('idle');
   const [code, setCode] = useState<string | null>(null);
@@ -56,6 +72,9 @@ export function useWebRTC() {
   }, []);
 
   useEffect(() => {
+    // Clean up any leftover OPFS files from previous sessions
+    clearOPFS();
+    
     return () => {
       cleanupConnection();
     };
@@ -483,6 +502,8 @@ export function useWebRTC() {
     if (!keepFiles) {
       setFiles([]);
       setFilesInfo([]);
+      setReceivedFiles([]);
+      clearOPFS();
     }
     setProgress({});
     setError(null);

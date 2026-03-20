@@ -58,7 +58,7 @@ export default function App() {
   const [showScanner, setShowScanner] = useState(false);
   const [timeLeft, setTimeLeft] = useState(600);
   const [savePreference, setSavePreference] = useState<'photos' | 'files' | null>(null);
-  const [qrBrightness, setQrBrightness] = useState(3);
+  const [qrBrightness, setQrBrightness] = useState(1);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const folderInputRef = useRef<HTMLInputElement>(null);
 
@@ -173,13 +173,15 @@ export default function App() {
   const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
 
   const downloadOrShare = async (action: 'photos' | 'files') => {
-    if (isMobile && action === 'photos' && navigator.canShare) {
+    if (isMobile && navigator.canShare) {
       const files = receivedFiles.map(rf => {
         if (rf.blob instanceof File && rf.blob.name === rf.info.name) {
           return rf.blob;
         }
         return new File([rf.blob], rf.info.name, { type: rf.info.type });
       });
+      
+      // Try to share all files at once
       if (navigator.canShare({ files })) {
         try {
           await navigator.share({ files, title: 'Saved from Pixel by Pixel' });
@@ -190,23 +192,28 @@ export default function App() {
         }
       } else {
         // Fallback to sharing one by one if batch fails
+        let sharedAny = false;
         for (const file of files) {
           if (navigator.canShare({ files: [file] })) {
             try {
               await navigator.share({ files: [file] });
+              sharedAny = true;
             } catch (e: any) {
               console.error('Share failed for', file.name, e);
               if (e.name === 'AbortError') return; // User cancelled
             }
           }
         }
-        return;
+        if (sharedAny) return;
       }
     }
     
-    // Fallback standard download for 'files' or if share failed
+    // Fallback standard download for 'files' or if share failed/not supported
     for (let i = 0; i < receivedFiles.length; i++) {
       const rf = receivedFiles[i];
+      
+      // On iOS, createObjectURL with OPFS File can sometimes fail, so we read it into memory if it's small enough
+      // But since we already have rf.blob, let's just use it.
       const url = URL.createObjectURL(rf.blob);
       const a = document.createElement('a');
       a.style.display = 'none';
@@ -218,6 +225,11 @@ export default function App() {
       
       // Revoke after a long delay to ensure the download completes on mobile
       setTimeout(() => URL.revokeObjectURL(url), 60000);
+      
+      // Small delay between downloads to prevent browser blocking multiple downloads
+      if (i < receivedFiles.length - 1) {
+        await new Promise(resolve => setTimeout(resolve, 300));
+      }
     }
   };
 
@@ -579,7 +591,7 @@ export default function App() {
                     </label>
                     <input 
                       type="range" 
-                      min="3" 
+                      min="0.3" 
                       max="10" 
                       step="0.1" 
                       value={qrBrightness} 
