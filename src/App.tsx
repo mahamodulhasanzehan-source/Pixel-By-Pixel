@@ -57,6 +57,7 @@ export default function App() {
   const [mode, setMode] = useState<'send' | 'receive'>('send');
   const [showScanner, setShowScanner] = useState(false);
   const [timeLeft, setTimeLeft] = useState(600);
+  const [savePreference, setSavePreference] = useState<'photos' | 'files' | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const folderInputRef = useRef<HTMLInputElement>(null);
 
@@ -79,6 +80,7 @@ export default function App() {
     cancelTransfer(false);
     setSelectedFiles([]);
     setReceiveCode('');
+    setSavePreference(null);
   }, [cancelTransfer]);
 
   useEffect(() => {
@@ -446,18 +448,28 @@ export default function App() {
 
                 <div className="space-y-4">
                   {isMobile ? (
-                    <button
-                      onClick={() => acceptTransfer()}
-                      className="w-full py-4 bg-blue-600 hover:bg-blue-500 text-white rounded-xl font-medium transition-all"
-                    >
-                      Accept Transfer
-                    </button>
+                    <div className="grid grid-cols-2 gap-3">
+                      <button
+                        onClick={() => { setSavePreference('photos'); acceptTransfer(); }}
+                        className="w-full py-4 bg-blue-600 hover:bg-blue-500 text-white rounded-xl font-medium transition-all flex flex-col items-center justify-center gap-1"
+                      >
+                        <Download className="w-5 h-5" />
+                        <span className="text-sm">Save to Photos</span>
+                      </button>
+                      <button
+                        onClick={() => { setSavePreference('files'); acceptTransfer(); }}
+                        className="w-full py-4 bg-slate-800 hover:bg-slate-700 text-white rounded-xl font-medium transition-all flex flex-col items-center justify-center gap-1"
+                      >
+                        <FileIcon className="w-5 h-5" />
+                        <span className="text-sm">Save to Files</span>
+                      </button>
+                    </div>
                   ) : (
                     <button
-                      onClick={handleSaveToFolders}
+                      onClick={() => { setSavePreference('files'); handleSaveToFolders(); }}
                       className="w-full py-4 bg-blue-600 hover:bg-blue-500 text-white rounded-xl font-medium transition-all"
                     >
-                      {'showDirectoryPicker' in window ? 'Select Folder to Save' : 'Download Files'}
+                      {'showDirectoryPicker' in window ? 'Select Folder to Save' : 'Accept & Save to Files'}
                     </button>
                   )}
                   
@@ -509,14 +521,15 @@ export default function App() {
                 
                 <div className="flex flex-col items-center justify-center pt-8 md:pt-0 md:pl-8">
                   <p className="text-sm font-medium text-slate-400 uppercase tracking-wider mb-4">Scan QR Code</p>
-                  <div className="bg-white p-4 rounded-2xl shadow-lg">
+                  <div className="p-4 rounded-2xl shadow-lg" style={{ backgroundColor: '#ffffff' }}>
                     <QRCodeSVG 
                       value={`${window.location.origin}?code=${code}`} 
                       size={180}
                       level="H"
                       includeMargin={false}
                       fgColor="#000000"
-                      bgColor="#FFFFFF"
+                      bgColor="#ffffff"
+                      style={{ display: 'block' }}
                     />
                   </div>
                 </div>
@@ -644,7 +657,7 @@ export default function App() {
                               }
                             }
                           }}
-                          className="w-full py-4 bg-blue-600 hover:bg-blue-500 text-white rounded-xl font-medium transition-all flex items-center justify-center gap-2 shadow-[0_0_20px_rgba(37,99,235,0.3)] hover:shadow-[0_0_25px_rgba(37,99,235,0.5)]"
+                          className={`w-full py-4 rounded-xl font-medium transition-all flex items-center justify-center gap-2 ${savePreference === 'photos' ? 'bg-blue-600 hover:bg-blue-500 text-white shadow-[0_0_20px_rgba(37,99,235,0.3)] hover:shadow-[0_0_25px_rgba(37,99,235,0.5)]' : 'bg-slate-800 hover:bg-slate-700 text-white'}`}
                         >
                           <Download className="w-5 h-5" />
                           Save to Photos
@@ -668,9 +681,9 @@ export default function App() {
                         });
                       }}
                       className={`w-full py-4 rounded-xl font-medium transition-all flex items-center justify-center gap-2 ${
-                        isMobile 
-                          ? 'bg-slate-800 hover:bg-slate-700 text-white' 
-                          : 'bg-blue-600 hover:bg-blue-500 text-white shadow-[0_0_20px_rgba(37,99,235,0.3)]'
+                        savePreference === 'files' || !isMobile 
+                          ? 'bg-blue-600 hover:bg-blue-500 text-white shadow-[0_0_20px_rgba(37,99,235,0.3)] hover:shadow-[0_0_25px_rgba(37,99,235,0.5)]' 
+                          : 'bg-slate-800 hover:bg-slate-700 text-white'
                       }`}
                     >
                       <FileIcon className="w-5 h-5" />

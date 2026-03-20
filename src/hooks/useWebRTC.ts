@@ -363,17 +363,6 @@ export function useWebRTC() {
     }
   };
 
-  const fallbackDownload = (blob: Blob, name: string) => {
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = name;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
-  };
-
   const finishFileReceive = async () => {
     if (!currentReceivingFileRef.current) return;
     const fileInfo = currentReceivingFileRef.current;
@@ -410,11 +399,8 @@ export function useWebRTC() {
     try {
       const blob = new Blob(receiveBufferRef.current, { type: fileInfo.type });
       setReceivedFiles(prev => [...prev, { info: fileInfo, blob }]);
-      
-      const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
-      if (!isMobile) {
-        fallbackDownload(blob, fileInfo.name);
-      }
+      // Intentionally not auto-downloading here to prevent temporary files.
+      // The user will explicitly save it from the UI after transfer completes.
     } catch (e) {
       console.error('Error creating blob or downloading:', e);
     }

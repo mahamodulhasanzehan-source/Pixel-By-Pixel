@@ -19,7 +19,14 @@ export function QRScanner({ onScan, onClose }: QRScannerProps) {
       { facingMode: "environment" },
       {
         fps: 10,
-        qrbox: { width: 250, height: 250 },
+        qrbox: (viewfinderWidth, viewfinderHeight) => {
+          const minEdge = Math.min(viewfinderWidth, viewfinderHeight);
+          return {
+            width: Math.floor(minEdge * 0.7),
+            height: Math.floor(minEdge * 0.7)
+          };
+        },
+        aspectRatio: 1.0,
       },
       (decodedText) => {
         // Stop scanning once we get a result
@@ -69,8 +76,8 @@ export function QRScanner({ onScan, onClose }: QRScannerProps) {
               {error}
             </div>
           ) : (
-            <div className="relative rounded-2xl overflow-hidden bg-black aspect-square">
-              <div id="qr-reader" className="w-full h-full"></div>
+            <div className="relative rounded-2xl overflow-hidden bg-black aspect-square w-full max-w-[320px] mx-auto flex items-center justify-center">
+              <div id="qr-reader" className="w-full h-full [&_video]:object-cover"></div>
             </div>
           )}
           <p className="text-center text-slate-400 text-sm mt-6">
