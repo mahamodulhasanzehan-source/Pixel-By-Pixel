@@ -58,7 +58,7 @@ export default function App() {
   const [showScanner, setShowScanner] = useState(false);
   const [timeLeft, setTimeLeft] = useState(600);
   const [savePreference, setSavePreference] = useState<'photos' | 'files' | null>(null);
-  const [qrBrightness, setQrBrightness] = useState(1);
+  const [qrBrightness, setQrBrightness] = useState(3);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const folderInputRef = useRef<HTMLInputElement>(null);
 
@@ -174,7 +174,12 @@ export default function App() {
 
   const downloadOrShare = async (action: 'photos' | 'files') => {
     if (isMobile && action === 'photos' && navigator.canShare) {
-      const files = receivedFiles.map(rf => new File([rf.blob], rf.info.name, { type: rf.info.type }));
+      const files = receivedFiles.map(rf => {
+        if (rf.blob instanceof File && rf.blob.name === rf.info.name) {
+          return rf.blob;
+        }
+        return new File([rf.blob], rf.info.name, { type: rf.info.type });
+      });
       if (navigator.canShare({ files })) {
         try {
           await navigator.share({ files, title: 'Saved from Pixel by Pixel' });
@@ -574,8 +579,8 @@ export default function App() {
                     </label>
                     <input 
                       type="range" 
-                      min="1" 
-                      max="3" 
+                      min="3" 
+                      max="10" 
                       step="0.1" 
                       value={qrBrightness} 
                       onChange={(e) => setQrBrightness(parseFloat(e.target.value))} 

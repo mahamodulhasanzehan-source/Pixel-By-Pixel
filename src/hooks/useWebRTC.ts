@@ -176,10 +176,10 @@ export function useWebRTC() {
                   console.error('Write error:', e);
                 }
               } else {
-                receiveBufferRef.current.push(data);
+                receiveBufferRef.current.push(data instanceof Blob ? data : new Blob([data]));
               }
             } else {
-              receiveBufferRef.current.push(data);
+              receiveBufferRef.current.push(data instanceof Blob ? data : new Blob([data]));
             }
             
             receivedSizeRef.current += byteLength;
@@ -417,46 +417,6 @@ export function useWebRTC() {
     setState('completed');
   };
 
-  const handleReceiveMessage = (data: any) => {
-    const byteLength = data.byteLength || data.size || data.length || 0;
-    if (currentReceivingFileRef.current) {
-      if (directoryHandleRef.current || opfsRootRef.current) {
-        writeQueueRef.current = writeQueueRef.current.then(async () => {
-          if (fileWritableRef.current) {
-            try {
-              await fileWritableRef.current.write(data);
-            } catch (e) {
-              console.error('Write error:', e);
-            }
-          } else {
-            receiveBufferRef.current.push(data);
-          }
-        });
-      } else {
-        receiveBufferRef.current.push(data);
-      }
-      
-      receivedSizeRef.current += byteLength;
-      totalBytesTransferredRef.current += byteLength;
-
-      const fileId = currentReceivingFileRef.current.id;
-      const now = Date.now();
-      
-      if (now - lastProgressUpdateRef.current > 100 || receivedSizeRef.current >= currentReceivingFileRef.current.size) {
-        setProgress(prev => ({
-          ...prev,
-          [fileId]: {
-            ...prev[fileId],
-            bytesTransferred: receivedSizeRef.current,
-          }
-        }));
-        lastProgressUpdateRef.current = now;
-      }
-
-      updateSpeed(totalBytesTransferredRef.current);
-    }
-  };
-
   const finishFileReceive = async () => {
     if (!currentReceivingFileRef.current) return;
     const fileInfo = currentReceivingFileRef.current;
@@ -487,6 +447,7 @@ export function useWebRTC() {
 
     try {
       const blob = new Blob(receiveBufferRef.current, { type: fileInfo.type });
+      receiveBufferRef.current = []; // Clear buffer immediately to free memory
       setReceivedFiles(prev => [...prev, { info: fileInfo, blob }]);
       // Intentionally not auto-downloading here to prevent temporary files.
       // The user will explicitly save it from the UI after transfer completes.
