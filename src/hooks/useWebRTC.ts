@@ -90,12 +90,12 @@ export function useWebRTC() {
           setState('transferring');
           startSendingFiles();
         } else if (data.type === 'header') {
-          currentReceivingFileRef.current = data.file;
-          receiveBufferRef.current = [];
-          receivedSizeRef.current = 0;
-          
-          if (directoryHandleRef.current || opfsRootRef.current) {
-            writeQueueRef.current = writeQueueRef.current.then(async () => {
+          writeQueueRef.current = writeQueueRef.current.then(async () => {
+            currentReceivingFileRef.current = data.file;
+            receiveBufferRef.current = [];
+            receivedSizeRef.current = 0;
+            
+            if (directoryHandleRef.current || opfsRootRef.current) {
               try {
                 let fileHandle;
                 if (directoryHandleRef.current) {
@@ -116,11 +116,11 @@ export function useWebRTC() {
                 fileWritableRef.current = null;
                 currentFileHandleRef.current = null;
               }
-            });
-          }
+            }
+          });
         } else if (data.type === 'eof') {
-          if (directoryHandleRef.current || opfsRootRef.current) {
-            writeQueueRef.current = writeQueueRef.current.then(async () => {
+          writeQueueRef.current = writeQueueRef.current.then(async () => {
+            if (directoryHandleRef.current || opfsRootRef.current) {
               if (fileWritableRef.current) {
                 try {
                   await fileWritableRef.current.close();
@@ -144,10 +144,10 @@ export function useWebRTC() {
               } else {
                 await saveReceivedFileMemory();
               }
-            });
-          } else {
-            saveReceivedFileMemory();
-          }
+            } else {
+              await saveReceivedFileMemory();
+            }
+          });
         } else if (data.type === 'file-saved') {
           fileAckRef.current = data.fileId;
         } else if (data.type === 'cancel') {
@@ -165,7 +165,43 @@ export function useWebRTC() {
         }
       } else {
         // Binary chunk (ArrayBuffer, Uint8Array, Blob, etc)
-        handleReceiveMessage(data);
+        writeQueueRef.current = writeQueueRef.current.then(async () => {
+          const byteLength = data.byteLength || data.size || data.length || 0;
+          if (currentReceivingFileRef.current) {
+            if (directoryHandleRef.current || opfsRootRef.current) {
+              if (fileWritableRef.current) {
+                try {
+                  await fileWritableRef.current.write(data);
+                } catch (e) {
+                  console.error('Write error:', e);
+                }
+              } else {
+                receiveBufferRef.current.push(data);
+              }
+            } else {
+              receiveBufferRef.current.push(data);
+            }
+            
+            receivedSizeRef.current += byteLength;
+            totalBytesTransferredRef.current += byteLength;
+
+            const fileId = currentReceivingFileRef.current.id;
+            const now = Date.now();
+            
+            if (now - lastProgressUpdateRef.current > 100 || receivedSizeRef.current >= currentReceivingFileRef.current.size) {
+              setProgress(prev => ({
+                ...prev,
+                [fileId]: {
+                  ...prev[fileId],
+                  bytesTransferred: receivedSizeRef.current,
+                }
+              }));
+              lastProgressUpdateRef.current = now;
+            }
+
+            updateSpeed(totalBytesTransferredRef.current);
+          }
+        });
       }
     });
 
@@ -416,22 +452,27 @@ export function useWebRTC() {
     if (!currentReceivingFileRef.current) return;
     const fileInfo = currentReceivingFileRef.current;
 
-    setProgress(prev => ({
-      ...prev,
-      [fileInfo.id]: {
-        ...prev[fileInfo.id],
-        bytesTransferred: fileInfo.size,
-        completed: true,
-      }
-    }));
+    let isAllCompleted = false;
 
     setProgress(prev => {
-      const allCompleted = (Object.values(prev) as FileProgress[]).every(p => p.completed);
-      if (allCompleted) {
+      const next = {
+        ...prev,
+        [fileInfo.id]: {
+          ...prev[fileInfo.id],
+          bytesTransferred: fileInfo.size,
+          completed: true,
+        }
+      };
+      isAllCompleted = (Object.values(next) as FileProgress[]).every(p => p.completed);
+      return next;
+    });
+
+    // Call setState outside of the setProgress updater function to prevent React crashes
+    setTimeout(() => {
+      if (isAllCompleted) {
         setState('completed');
       }
-      return prev;
-    });
+    }, 0);
 
     if (connRef.current && connRef.current.open) {
       connRef.current.send({ type: 'file-saved', fileId: fileInfo.id });

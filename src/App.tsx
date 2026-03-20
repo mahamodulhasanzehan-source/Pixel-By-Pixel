@@ -103,7 +103,7 @@ export default function App() {
         setTimeLeft(prev => {
           if (prev <= 1) {
             clearInterval(interval);
-            resetAll();
+            setTimeout(() => resetAll(), 0);
             return 0;
           }
           return prev - 1;
@@ -179,8 +179,9 @@ export default function App() {
         try {
           await navigator.share({ files, title: 'Saved from Pixel by Pixel' });
           return;
-        } catch (e) {
+        } catch (e: any) {
           console.error('Share failed', e);
+          if (e.name === 'AbortError') return; // User cancelled
         }
       } else {
         // Fallback to sharing one by one if batch fails
@@ -188,8 +189,9 @@ export default function App() {
           if (navigator.canShare({ files: [file] })) {
             try {
               await navigator.share({ files: [file] });
-            } catch (e) {
+            } catch (e: any) {
               console.error('Share failed for', file.name, e);
+              if (e.name === 'AbortError') return; // User cancelled
             }
           }
         }
@@ -209,9 +211,8 @@ export default function App() {
       a.click();
       document.body.removeChild(a);
       
-      // Small delay to allow browser to process multiple downloads
-      await new Promise(resolve => setTimeout(resolve, 400));
-      URL.revokeObjectURL(url);
+      // Revoke after a long delay to ensure the download completes on mobile
+      setTimeout(() => URL.revokeObjectURL(url), 60000);
     }
   };
 
@@ -504,7 +505,7 @@ export default function App() {
                       onClick={() => { setSavePreference('files'); handleSaveToFolders(); }}
                       className="w-full py-4 bg-blue-600 hover:bg-blue-500 text-white rounded-xl font-medium transition-all"
                     >
-                      {'showDirectoryPicker' in window ? 'Select Folder to Save' : 'Accept & Save to Files'}
+                      {'showDirectoryPicker' in window ? 'Select Folder to Save' : 'Accept Transfer'}
                     </button>
                   )}
                   
@@ -733,7 +734,7 @@ export default function App() {
                                   document.body.appendChild(a);
                                   a.click();
                                   document.body.removeChild(a);
-                                  setTimeout(() => URL.revokeObjectURL(url), 1000);
+                                  setTimeout(() => URL.revokeObjectURL(url), 60000);
                                 }}
                                 className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-white rounded-lg text-sm font-medium transition-colors shrink-0"
                               >
