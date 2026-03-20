@@ -339,7 +339,10 @@ export function useWebRTC() {
     
     if (!handle) {
       try {
-        if (navigator.storage && navigator.storage.getDirectory) {
+        const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+        if (isMobile) {
+          console.log('OPFS disabled on mobile to ensure native share/download compatibility');
+        } else if (navigator.storage && navigator.storage.getDirectory) {
           opfsRootRef.current = await navigator.storage.getDirectory();
         }
       } catch (e) {

@@ -58,7 +58,7 @@ export default function App() {
   const [showScanner, setShowScanner] = useState(false);
   const [timeLeft, setTimeLeft] = useState(600);
   const [savePreference, setSavePreference] = useState<'photos' | 'files' | null>(null);
-  const [qrBrightness, setQrBrightness] = useState(1);
+  const [qrBrightness, setQrBrightness] = useState(4);
   const [isSaving, setIsSaving] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const folderInputRef = useRef<HTMLInputElement>(null);
