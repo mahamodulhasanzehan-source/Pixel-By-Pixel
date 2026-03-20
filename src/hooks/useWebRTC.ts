@@ -38,8 +38,11 @@ export function useWebRTC() {
   const fileAckRef = useRef<string | null>(null);
   const fileWritableRef = useRef<any>(null);
   const writeQueueRef = useRef<Promise<void>>(Promise.resolve());
+  const lastProgressUpdateRef = useRef<number>(0);
 
   const directoryHandleRef = useRef<any>(null);
+  const opfsRootRef = useRef<any>(null);
+  const currentFileHandleRef = useRef<any>(null);
 
   const cleanupConnection = useCallback(() => {
     if (connRef.current) {
@@ -73,7 +76,8 @@ export function useWebRTC() {
     });
 
     conn.on('data', (data: any) => {
-      if (typeof data === 'object' && data.type) {
+      const knownTypes = ['files-info', 'receiver-ready', 'header', 'eof', 'file-saved', 'cancel', 'graceful-close'];
+      if (typeof data === 'object' && data !== null && knownTypes.includes(data.type)) {
         if (data.type === 'files-info' && !isSenderSide) {
           setFilesInfo(data.filesInfo);
           const initialProgress: Record<string, FileProgress> = {};
@@ -90,19 +94,32 @@ export function useWebRTC() {
           receiveBufferRef.current = [];
           receivedSizeRef.current = 0;
           
-          if (directoryHandleRef.current) {
+          if (directoryHandleRef.current || opfsRootRef.current) {
             writeQueueRef.current = writeQueueRef.current.then(async () => {
               try {
-                const fileHandle = await directoryHandleRef.current.getFileHandle(data.file.name, { create: true });
-                fileWritableRef.current = await fileHandle.createWritable();
+                let fileHandle;
+                if (directoryHandleRef.current) {
+                  fileHandle = await directoryHandleRef.current.getFileHandle(data.file.name, { create: true });
+                } else {
+                  fileHandle = await opfsRootRef.current.getFileHandle(data.file.name, { create: true });
+                  currentFileHandleRef.current = fileHandle;
+                }
+                
+                if (fileHandle.createWritable) {
+                  fileWritableRef.current = await fileHandle.createWritable();
+                } else {
+                  fileWritableRef.current = null;
+                  currentFileHandleRef.current = null;
+                }
               } catch (e) {
                 console.error('Failed to create writable:', e);
                 fileWritableRef.current = null;
+                currentFileHandleRef.current = null;
               }
             });
           }
         } else if (data.type === 'eof') {
-          if (directoryHandleRef.current) {
+          if (directoryHandleRef.current || opfsRootRef.current) {
             writeQueueRef.current = writeQueueRef.current.then(async () => {
               if (fileWritableRef.current) {
                 try {
@@ -111,7 +128,19 @@ export function useWebRTC() {
                   console.error('Error closing writable:', e);
                 }
                 fileWritableRef.current = null;
-                await finishFileReceive();
+                
+                if (directoryHandleRef.current) {
+                  await finishFileReceive();
+                } else if (opfsRootRef.current && currentFileHandleRef.current) {
+                  try {
+                    const file = await currentFileHandleRef.current.getFile();
+                    setReceivedFiles(prev => [...prev, { info: currentReceivingFileRef.current!, blob: file }]);
+                  } catch (e) {
+                    console.error('Error getting file from OPFS:', e);
+                  }
+                  currentFileHandleRef.current = null;
+                  await finishFileReceive();
+                }
               } else {
                 await saveReceivedFileMemory();
               }
@@ -134,9 +163,9 @@ export function useWebRTC() {
           setProgress({});
           setSpeed(0);
         }
-      } else if (data instanceof ArrayBuffer || data instanceof Uint8Array) {
-        // Binary chunk
-        handleReceiveMessage(data as ArrayBuffer);
+      } else {
+        // Binary chunk (ArrayBuffer, Uint8Array, Blob, etc)
+        handleReceiveMessage(data);
       }
     });
 
@@ -244,6 +273,16 @@ export function useWebRTC() {
   const acceptTransfer = async (handle?: any) => {
     directoryHandleRef.current = handle || null;
     
+    if (!handle) {
+      try {
+        if (navigator.storage && navigator.storage.getDirectory) {
+          opfsRootRef.current = await navigator.storage.getDirectory();
+        }
+      } catch (e) {
+        console.warn('OPFS not available, falling back to RAM', e);
+      }
+    }
+    
     if (connRef.current && connRef.current.open) {
       connRef.current.send({ type: 'receiver-ready' });
       setState('transferring');
@@ -279,7 +318,7 @@ export function useWebRTC() {
         // Implement backpressure to prevent sender from overwhelming the buffer
         // and to show accurate progress.
         const dataChannel = (connRef.current as any).dataChannel;
-        if (dataChannel && dataChannel.bufferedAmount > 1024 * 1024 * 8) { // 8MB buffer limit
+        if (dataChannel && dataChannel.bufferedAmount > 1024 * 1024 * 2) { // 2MB buffer limit
           await new Promise(resolve => setTimeout(resolve, 10));
           continue;
         }
@@ -290,13 +329,17 @@ export function useWebRTC() {
 
         offset += buffer.byteLength;
 
-        setProgress(prev => ({
-          ...prev,
-          [fileInfo.id]: {
-            ...prev[fileInfo.id],
-            bytesTransferred: offset,
-          }
-        }));
+        const now = Date.now();
+        if (now - lastProgressUpdateRef.current > 100 || offset >= file.size) {
+          setProgress(prev => ({
+            ...prev,
+            [fileInfo.id]: {
+              ...prev[fileInfo.id],
+              bytesTransferred: offset,
+            }
+          }));
+          lastProgressUpdateRef.current = now;
+        }
 
         totalBytesTransferredRef.current = previousTotal + offset;
         updateSpeed(totalBytesTransferredRef.current);
@@ -329,9 +372,10 @@ export function useWebRTC() {
     setState('completed');
   };
 
-  const handleReceiveMessage = (data: ArrayBuffer) => {
+  const handleReceiveMessage = (data: any) => {
+    const byteLength = data.byteLength || data.size || data.length || 0;
     if (currentReceivingFileRef.current) {
-      if (directoryHandleRef.current) {
+      if (directoryHandleRef.current || opfsRootRef.current) {
         writeQueueRef.current = writeQueueRef.current.then(async () => {
           if (fileWritableRef.current) {
             try {
@@ -347,17 +391,22 @@ export function useWebRTC() {
         receiveBufferRef.current.push(data);
       }
       
-      receivedSizeRef.current += data.byteLength;
-      totalBytesTransferredRef.current += data.byteLength;
+      receivedSizeRef.current += byteLength;
+      totalBytesTransferredRef.current += byteLength;
 
       const fileId = currentReceivingFileRef.current.id;
-      setProgress(prev => ({
-        ...prev,
-        [fileId]: {
-          ...prev[fileId],
-          bytesTransferred: receivedSizeRef.current,
-        }
-      }));
+      const now = Date.now();
+      
+      if (now - lastProgressUpdateRef.current > 100 || receivedSizeRef.current >= currentReceivingFileRef.current.size) {
+        setProgress(prev => ({
+          ...prev,
+          [fileId]: {
+            ...prev[fileId],
+            bytesTransferred: receivedSizeRef.current,
+          }
+        }));
+        lastProgressUpdateRef.current = now;
+      }
 
       updateSpeed(totalBytesTransferredRef.current);
     }
@@ -371,6 +420,7 @@ export function useWebRTC() {
       ...prev,
       [fileInfo.id]: {
         ...prev[fileInfo.id],
+        bytesTransferred: fileInfo.size,
         completed: true,
       }
     }));

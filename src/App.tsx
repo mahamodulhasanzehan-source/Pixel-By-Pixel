@@ -58,6 +58,7 @@ export default function App() {
   const [showScanner, setShowScanner] = useState(false);
   const [timeLeft, setTimeLeft] = useState(600);
   const [savePreference, setSavePreference] = useState<'photos' | 'files' | null>(null);
+  const [qrBrightness, setQrBrightness] = useState(1);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const folderInputRef = useRef<HTMLInputElement>(null);
 
@@ -171,17 +172,55 @@ export default function App() {
 
   const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
 
+  const downloadOrShare = async (action: 'photos' | 'files') => {
+    if (isMobile && action === 'photos' && navigator.canShare) {
+      const files = receivedFiles.map(rf => new File([rf.blob], rf.info.name, { type: rf.info.type }));
+      if (navigator.canShare({ files })) {
+        try {
+          await navigator.share({ files, title: 'Saved from Pixel by Pixel' });
+          return;
+        } catch (e) {
+          console.error('Share failed', e);
+        }
+      } else {
+        // Fallback to sharing one by one if batch fails
+        for (const file of files) {
+          if (navigator.canShare({ files: [file] })) {
+            try {
+              await navigator.share({ files: [file] });
+            } catch (e) {
+              console.error('Share failed for', file.name, e);
+            }
+          }
+        }
+        return;
+      }
+    }
+    
+    // Fallback standard download for 'files' or if share failed
+    receivedFiles.forEach(rf => {
+      const url = URL.createObjectURL(rf.blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = rf.info.name;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+    });
+  };
+
   const handleSaveToFolders = async () => {
     if ('showDirectoryPicker' in window) {
       try {
         const handle = await (window as any).showDirectoryPicker({ mode: 'readwrite' });
-        acceptTransfer(handle, false);
+        acceptTransfer(handle);
       } catch (err) {
         console.error('Directory selection cancelled or failed:', err);
       }
     } else {
       // Fallback for browsers without showDirectoryPicker
-      acceptTransfer(undefined, false);
+      acceptTransfer(undefined);
     }
   };
 
@@ -519,7 +558,7 @@ export default function App() {
                   </p>
                 </div>
                 
-                <div className="flex flex-col items-center justify-center pt-8 md:pt-0 md:pl-8">
+                <div className="flex flex-col items-center justify-center pt-8 md:pt-0 md:pl-8" style={{ filter: `brightness(${qrBrightness})` }}>
                   <p className="text-sm font-medium text-slate-400 uppercase tracking-wider mb-4">Scan QR Code</p>
                   <div className="p-4 rounded-2xl shadow-lg" style={{ backgroundColor: '#ffffff' }}>
                     <QRCodeSVG 
@@ -530,6 +569,20 @@ export default function App() {
                       fgColor="#000000"
                       bgColor="#ffffff"
                       style={{ display: 'block' }}
+                    />
+                  </div>
+                  <div className="mt-6 w-full max-w-[200px] flex flex-col items-center">
+                    <label className="text-xs text-slate-400 mb-2 flex items-center gap-2">
+                      Screen Brightness
+                    </label>
+                    <input 
+                      type="range" 
+                      min="1" 
+                      max="3" 
+                      step="0.1" 
+                      value={qrBrightness} 
+                      onChange={(e) => setQrBrightness(parseFloat(e.target.value))} 
+                      className="w-full accent-blue-500"
                     />
                   </div>
                 </div>
@@ -636,27 +689,7 @@ export default function App() {
                     {isMobile && (
                       <div className="space-y-2">
                         <button
-                          onClick={async () => {
-                            const files = receivedFiles.map(rf => new File([rf.blob], rf.info.name, { type: rf.info.type }));
-                            if (navigator.canShare && navigator.canShare({ files })) {
-                              try {
-                                await navigator.share({ files, title: 'Saved from Pixel by Pixel' });
-                              } catch (e) {
-                                console.error('Share failed', e);
-                              }
-                            } else {
-                              // Fallback to sharing one by one if batch fails
-                              for (const file of files) {
-                                if (navigator.canShare && navigator.canShare({ files: [file] })) {
-                                  try {
-                                    await navigator.share({ files: [file] });
-                                  } catch (e) {
-                                    console.error('Share failed for', file.name, e);
-                                  }
-                                }
-                              }
-                            }
-                          }}
+                          onClick={() => downloadOrShare('photos')}
                           className={`w-full py-4 rounded-xl font-medium transition-all flex items-center justify-center gap-2 ${savePreference === 'photos' ? 'bg-blue-600 hover:bg-blue-500 text-white shadow-[0_0_20px_rgba(37,99,235,0.3)] hover:shadow-[0_0_25px_rgba(37,99,235,0.5)]' : 'bg-slate-800 hover:bg-slate-700 text-white'}`}
                         >
                           <Download className="w-5 h-5" />
@@ -667,28 +700,24 @@ export default function App() {
                         </p>
                       </div>
                     )}
-                    <button
-                      onClick={() => {
-                        receivedFiles.forEach(rf => {
-                          const url = URL.createObjectURL(rf.blob);
-                          const a = document.createElement('a');
-                          a.href = url;
-                          a.download = rf.info.name;
-                          document.body.appendChild(a);
-                          a.click();
-                          document.body.removeChild(a);
-                          setTimeout(() => URL.revokeObjectURL(url), 1000);
-                        });
-                      }}
-                      className={`w-full py-4 rounded-xl font-medium transition-all flex items-center justify-center gap-2 ${
-                        savePreference === 'files' || !isMobile 
-                          ? 'bg-blue-600 hover:bg-blue-500 text-white shadow-[0_0_20px_rgba(37,99,235,0.3)] hover:shadow-[0_0_25px_rgba(37,99,235,0.5)]' 
-                          : 'bg-slate-800 hover:bg-slate-700 text-white'
-                      }`}
-                    >
-                      <FileIcon className="w-5 h-5" />
-                      Save to Files
-                    </button>
+                    <div className="space-y-2">
+                      <button
+                        onClick={() => downloadOrShare('files')}
+                        className={`w-full py-4 rounded-xl font-medium transition-all flex items-center justify-center gap-2 ${
+                          savePreference === 'files' || !isMobile 
+                            ? 'bg-blue-600 hover:bg-blue-500 text-white shadow-[0_0_20px_rgba(37,99,235,0.3)] hover:shadow-[0_0_25px_rgba(37,99,235,0.5)]' 
+                            : 'bg-slate-800 hover:bg-slate-700 text-white'
+                        }`}
+                      >
+                        <FileIcon className="w-5 h-5" />
+                        Save to Files
+                      </button>
+                      {isMobile && (
+                        <p className="text-xs text-slate-400 text-center px-4">
+                          (Will download directly to your device's default downloads folder)
+                        </p>
+                      )}
+                    </div>
                   </div>
                 )}
 
