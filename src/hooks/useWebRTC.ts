@@ -229,6 +229,15 @@ export function useWebRTC() {
   useEffect(() => { filesInfoRef.current = filesInfo; }, [filesInfo]);
   useEffect(() => { filesRef.current = files; }, [files]);
 
+  useEffect(() => {
+    if (state === 'transferring' && !isSender) {
+      const p = Object.values(progress);
+      if (p.length > 0 && p.every(f => f.completed)) {
+        setState('completed');
+      }
+    }
+  }, [progress, state, isSender]);
+
   const startSession = (selectedFiles: File[]) => {
     cleanupConnection();
     setIsSender(true);
@@ -452,10 +461,8 @@ export function useWebRTC() {
     if (!currentReceivingFileRef.current) return;
     const fileInfo = currentReceivingFileRef.current;
 
-    let isAllCompleted = false;
-
     setProgress(prev => {
-      const next = {
+      return {
         ...prev,
         [fileInfo.id]: {
           ...prev[fileInfo.id],
@@ -463,16 +470,7 @@ export function useWebRTC() {
           completed: true,
         }
       };
-      isAllCompleted = (Object.values(next) as FileProgress[]).every(p => p.completed);
-      return next;
     });
-
-    // Call setState outside of the setProgress updater function to prevent React crashes
-    setTimeout(() => {
-      if (isAllCompleted) {
-        setState('completed');
-      }
-    }, 0);
 
     if (connRef.current && connRef.current.open) {
       connRef.current.send({ type: 'file-saved', fileId: fileInfo.id });
