@@ -59,6 +59,7 @@ export default function App() {
   const [timeLeft, setTimeLeft] = useState(600);
   const [savePreference, setSavePreference] = useState<'photos' | 'files' | null>(null);
   const [qrBrightness, setQrBrightness] = useState(1);
+  const [isSaving, setIsSaving] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const folderInputRef = useRef<HTMLInputElement>(null);
 
@@ -173,63 +174,85 @@ export default function App() {
   const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
 
   const downloadOrShare = async (action: 'photos' | 'files') => {
-    if (isMobile && navigator.canShare) {
-      const files = receivedFiles.map(rf => {
-        if (rf.blob instanceof File && rf.blob.name === rf.info.name) {
-          return rf.blob;
-        }
-        return new File([rf.blob], rf.info.name, { type: rf.info.type });
-      });
-      
-      // Try to share all files at once
-      if (navigator.canShare({ files })) {
-        try {
-          await navigator.share({ files, title: 'Saved from Pixel by Pixel' });
-          return;
-        } catch (e: any) {
-          console.error('Share failed', e);
-          if (e.name === 'AbortError') return; // User cancelled
-        }
-      } else {
-        // Fallback to sharing one by one if batch fails
-        let sharedAny = false;
-        for (const file of files) {
-          if (navigator.canShare({ files: [file] })) {
+    setIsSaving(true);
+    try {
+      if (isMobile && action === 'photos' && navigator.canShare) {
+        const files = [];
+        for (const rf of receivedFiles) {
+          let file = rf.blob;
+          if (rf.blob instanceof File) {
             try {
-              await navigator.share({ files: [file] });
-              sharedAny = true;
-            } catch (e: any) {
-              console.error('Share failed for', file.name, e);
-              if (e.name === 'AbortError') return; // User cancelled
+              const buffer = await rf.blob.arrayBuffer();
+              file = new File([buffer], rf.info.name, { type: rf.info.type });
+            } catch (e) {
+              console.warn('Failed to read OPFS file into RAM', e);
+            }
+          } else {
+            file = new File([rf.blob], rf.info.name, { type: rf.info.type });
+          }
+          files.push(file);
+        }
+        
+        // Try to share all files at once
+        if (navigator.canShare({ files })) {
+          try {
+            await navigator.share({ files, title: 'Saved from Pixel by Pixel' });
+            return;
+          } catch (e: any) {
+            console.error('Share failed', e);
+            if (e.name === 'AbortError') return; // User cancelled
+          }
+        } else {
+          // Fallback to sharing one by one if batch fails
+          let sharedAny = false;
+          for (const file of files) {
+            if (navigator.canShare({ files: [file] })) {
+              try {
+                await navigator.share({ files: [file] });
+                sharedAny = true;
+              } catch (e: any) {
+                console.error('Share failed for', file.name, e);
+                if (e.name === 'AbortError') return; // User cancelled
+              }
             }
           }
+          if (sharedAny) return;
         }
-        if (sharedAny) return;
       }
-    }
-    
-    // Fallback standard download for 'files' or if share failed/not supported
-    for (let i = 0; i < receivedFiles.length; i++) {
-      const rf = receivedFiles[i];
       
-      // On iOS, createObjectURL with OPFS File can sometimes fail, so we read it into memory if it's small enough
-      // But since we already have rf.blob, let's just use it.
-      const url = URL.createObjectURL(rf.blob);
-      const a = document.createElement('a');
-      a.style.display = 'none';
-      a.href = url;
-      a.download = rf.info.name;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      
-      // Revoke after a long delay to ensure the download completes on mobile
-      setTimeout(() => URL.revokeObjectURL(url), 60000);
-      
-      // Small delay between downloads to prevent browser blocking multiple downloads
-      if (i < receivedFiles.length - 1) {
-        await new Promise(resolve => setTimeout(resolve, 300));
+      // Fallback standard download for 'files' or if share failed/not supported
+      for (let i = 0; i < receivedFiles.length; i++) {
+        const rf = receivedFiles[i];
+        
+        let downloadBlob = rf.blob;
+        if (isMobile && rf.blob instanceof File) {
+          try {
+            const buffer = await rf.blob.arrayBuffer();
+            downloadBlob = new Blob([buffer], { type: rf.info.type });
+          } catch (e) {
+            console.warn('Failed to read OPFS file into RAM for download', e);
+          }
+        }
+        
+        const url = URL.createObjectURL(downloadBlob);
+        const a = document.createElement('a');
+        a.style.display = 'none';
+        a.href = url;
+        a.download = rf.info.name;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        
+        // Revoke after a long delay to ensure the download completes on mobile
+        setTimeout(() => URL.revokeObjectURL(url), 60000);
+        
+        // Small delay between downloads to prevent browser blocking multiple downloads
+        if (i < receivedFiles.length - 1) {
+          await new Promise(resolve => setTimeout(resolve, 300));
+        }
       }
+    } finally {
+      setIsSaving(false);
     }
   };
 
@@ -704,10 +727,15 @@ export default function App() {
                       <div className="space-y-2">
                         <button
                           onClick={() => downloadOrShare('photos')}
-                          className="w-full py-4 rounded-xl font-medium transition-all flex items-center justify-center gap-2 bg-blue-600 hover:bg-blue-500 text-white shadow-[0_0_20px_rgba(37,99,235,0.3)] hover:shadow-[0_0_25px_rgba(37,99,235,0.5)]"
+                          disabled={isSaving}
+                          className="w-full py-4 rounded-xl font-medium transition-all flex items-center justify-center gap-2 bg-blue-600 hover:bg-blue-500 text-white shadow-[0_0_20px_rgba(37,99,235,0.3)] hover:shadow-[0_0_25px_rgba(37,99,235,0.5)] disabled:opacity-50 disabled:cursor-not-allowed"
                         >
-                          <Download className="w-5 h-5" />
-                          Save to Photos
+                          {isSaving ? (
+                            <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                          ) : (
+                            <Download className="w-5 h-5" />
+                          )}
+                          {isSaving ? 'Saving...' : 'Save to Photos'}
                         </button>
                         <p className="text-xs text-slate-400 text-center px-4">
                           (Scroll down in the menu and tap <strong>"Save Video"</strong> or <strong>"Save Image"</strong>)
@@ -717,14 +745,19 @@ export default function App() {
                     <div className="space-y-2">
                       <button
                         onClick={() => downloadOrShare('files')}
+                        disabled={isSaving}
                         className={`w-full py-4 rounded-xl font-medium transition-all flex items-center justify-center gap-2 ${
                           !isMobile 
                             ? 'bg-blue-600 hover:bg-blue-500 text-white shadow-[0_0_20px_rgba(37,99,235,0.3)] hover:shadow-[0_0_25px_rgba(37,99,235,0.5)]' 
                             : 'bg-slate-800 hover:bg-slate-700 text-white'
-                        }`}
+                        } disabled:opacity-50 disabled:cursor-not-allowed`}
                       >
-                        <FileIcon className="w-5 h-5" />
-                        Save to Files
+                        {isSaving ? (
+                          <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                        ) : (
+                          <FileIcon className="w-5 h-5" />
+                        )}
+                        {isSaving ? 'Saving...' : 'Save to Files'}
                       </button>
                       {isMobile && (
                         <p className="text-xs text-slate-400 text-center px-4">
@@ -742,20 +775,35 @@ export default function App() {
                             <div key={idx} className="flex items-center justify-between bg-slate-950 p-3 rounded-xl border border-slate-800">
                               <span className="text-sm truncate mr-3 text-slate-300">{rf.info.name}</span>
                               <button
-                                onClick={() => {
-                                  const url = URL.createObjectURL(rf.blob);
-                                  const a = document.createElement('a');
-                                  a.style.display = 'none';
-                                  a.href = url;
-                                  a.download = rf.info.name;
-                                  document.body.appendChild(a);
-                                  a.click();
-                                  document.body.removeChild(a);
-                                  setTimeout(() => URL.revokeObjectURL(url), 60000);
+                                onClick={async () => {
+                                  setIsSaving(true);
+                                  try {
+                                    let downloadBlob = rf.blob;
+                                    if (isMobile && rf.blob instanceof File) {
+                                      try {
+                                        const buffer = await rf.blob.arrayBuffer();
+                                        downloadBlob = new Blob([buffer], { type: rf.info.type });
+                                      } catch (e) {
+                                        console.warn('Failed to read OPFS file into RAM for download', e);
+                                      }
+                                    }
+                                    const url = URL.createObjectURL(downloadBlob);
+                                    const a = document.createElement('a');
+                                    a.style.display = 'none';
+                                    a.href = url;
+                                    a.download = rf.info.name;
+                                    document.body.appendChild(a);
+                                    a.click();
+                                    document.body.removeChild(a);
+                                    setTimeout(() => URL.revokeObjectURL(url), 60000);
+                                  } finally {
+                                    setIsSaving(false);
+                                  }
                                 }}
-                                className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-white rounded-lg text-sm font-medium transition-colors shrink-0"
+                                disabled={isSaving}
+                                className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-white rounded-lg text-sm font-medium transition-colors shrink-0 disabled:opacity-50 disabled:cursor-not-allowed"
                               >
-                                Save
+                                {isSaving ? 'Saving...' : 'Save'}
                               </button>
                             </div>
                           ))}

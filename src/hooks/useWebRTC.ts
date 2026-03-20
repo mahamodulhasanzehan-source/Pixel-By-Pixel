@@ -250,7 +250,7 @@ export function useWebRTC() {
 
   useEffect(() => {
     if (state === 'transferring' && !isSender) {
-      const p = Object.values(progress);
+      const p = Object.values(progress) as FileProgress[];
       if (p.length > 0 && p.every(f => f.completed)) {
         setState('completed');
       }
