@@ -174,7 +174,6 @@ export default function App() {
   const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
 
   const downloadOrShare = async (action: 'photos' | 'files') => {
-    setIsSaving(true);
     try {
       if (isMobile && action === 'photos' && navigator.canShare) {
         const files = receivedFiles.map(rf => {
@@ -184,17 +183,15 @@ export default function App() {
           return new File([rf.blob], rf.info.name, { type: rf.info.type });
         });
         
-        // Try to share all files at once
         if (navigator.canShare({ files })) {
           try {
             await navigator.share({ files, title: 'Saved from Pixel by Pixel' });
             return;
           } catch (e: any) {
             console.error('Share failed', e);
-            if (e.name === 'AbortError') return; // User cancelled
+            if (e.name === 'AbortError') return;
           }
         } else {
-          // Fallback to sharing one by one if batch fails
           let sharedAny = false;
           for (const file of files) {
             if (navigator.canShare({ files: [file] })) {
@@ -203,7 +200,7 @@ export default function App() {
                 sharedAny = true;
               } catch (e: any) {
                 console.error('Share failed for', file.name, e);
-                if (e.name === 'AbortError') return; // User cancelled
+                if (e.name === 'AbortError') return;
               }
             }
           }
@@ -211,10 +208,9 @@ export default function App() {
         }
       }
       
-      // Fallback standard download for 'files' or if share failed/not supported
+      setIsSaving(true);
       for (let i = 0; i < receivedFiles.length; i++) {
         const rf = receivedFiles[i];
-        
         const url = URL.createObjectURL(rf.blob);
         const a = document.createElement('a');
         a.style.display = 'none';
@@ -224,16 +220,15 @@ export default function App() {
         a.click();
         document.body.removeChild(a);
         
-        // Revoke after a long delay to ensure the download completes on mobile.
-        // Android Download Manager runs in a separate process and can take several seconds
-        // to pick up the blob URL. Revoking it too early causes silent download failures.
         setTimeout(() => URL.revokeObjectURL(url), 300000); // 5 minutes
         
-        // Small delay between downloads to prevent browser blocking multiple downloads
         if (i < receivedFiles.length - 1) {
           await new Promise(resolve => setTimeout(resolve, 500));
         }
       }
+    } catch (e) {
+      console.error('Failed to save or share:', e);
+      alert('Failed to save file. If this persists, try using a different browser.');
     } finally {
       setIsSaving(false);
     }
@@ -759,8 +754,8 @@ export default function App() {
                               <span className="text-sm truncate mr-3 text-slate-300">{rf.info.name}</span>
                               <button
                                 onClick={async () => {
-                                  setIsSaving(true);
                                   try {
+                                    setIsSaving(true);
                                     const url = URL.createObjectURL(rf.blob);
                                     const a = document.createElement('a');
                                     a.style.display = 'none';
@@ -770,6 +765,9 @@ export default function App() {
                                     a.click();
                                     document.body.removeChild(a);
                                     setTimeout(() => URL.revokeObjectURL(url), 300000);
+                                  } catch (e) {
+                                    console.error('Failed to save file individually', e);
+                                    alert('Failed to save file. If this persists, try using a different browser.');
                                   } finally {
                                     setIsSaving(false);
                                   }

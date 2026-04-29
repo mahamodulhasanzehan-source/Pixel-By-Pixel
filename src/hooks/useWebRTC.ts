@@ -33,6 +33,15 @@ const clearOPFS = async () => {
   }
 };
 
+const PEER_CONFIG = {
+  config: {
+    iceServers: [
+      { urls: 'stun:stun.l.google.com:19302' },
+      { urls: 'stun:global.stun.twilio.com:3478' }
+    ]
+  }
+};
+
 export function useWebRTC() {
   const [state, setState] = useState<TransferState>('idle');
   const [code, setCode] = useState<string | null>(null);
@@ -172,6 +181,11 @@ export function useWebRTC() {
         } else if (data.type === 'cancel') {
           setError('Transfer cancelled by the other party');
           setState('error');
+          if (fileWritableRef.current) {
+            fileWritableRef.current.close().catch(() => {});
+            fileWritableRef.current = null;
+          }
+          clearOPFS();
           cleanupConnection();
         } else if (data.type === 'graceful-close') {
           cleanupConnection();
@@ -181,6 +195,7 @@ export function useWebRTC() {
           setFilesInfo([]);
           setProgress({});
           setSpeed(0);
+          clearOPFS();
         }
       } else {
         // Binary chunk (ArrayBuffer, Uint8Array, Blob, etc)
@@ -191,8 +206,21 @@ export function useWebRTC() {
               if (fileWritableRef.current) {
                 try {
                   await fileWritableRef.current.write(data);
-                } catch (e) {
+                } catch (e: any) {
                   console.error('Write error:', e);
+                  if (e.name === 'QuotaExceededError' || e.message?.toLowerCase().includes('quota') || e.message?.toLowerCase().includes('space')) {
+                    setError('Storage full. Not enough space to receive file.');
+                    setState('error');
+                    if (connRef.current && connRef.current.open) {
+                      connRef.current.send({ type: 'cancel' });
+                    }
+                    if (fileWritableRef.current) {
+                      fileWritableRef.current.close().catch(() => {});
+                      fileWritableRef.current = null;
+                    }
+                    clearOPFS();
+                    cleanupConnection();
+                  }
                 }
               } else {
                 receiveBufferRef.current.push(data instanceof Blob ? data : new Blob([data]));
@@ -229,6 +257,11 @@ export function useWebRTC() {
       if (stateRef.current !== 'completed' && stateRef.current !== 'idle' && stateRef.current !== 'error') {
         setError('Connection lost');
         setState('error');
+        if (fileWritableRef.current) {
+          fileWritableRef.current.close().catch(() => {});
+          fileWritableRef.current = null;
+        }
+        clearOPFS();
       }
     });
 
@@ -236,6 +269,11 @@ export function useWebRTC() {
       console.error('Connection error:', err);
       setError('Connection error occurred');
       setState('error');
+      if (fileWritableRef.current) {
+        fileWritableRef.current.close().catch(() => {});
+        fileWritableRef.current = null;
+      }
+      clearOPFS();
     });
   };
 
@@ -273,6 +311,8 @@ export function useWebRTC() {
       type: f.type,
     }));
     setFilesInfo(info);
+    filesInfoRef.current = info; // Sync ref immediately
+    filesRef.current = selectedFiles;
 
     const initialProgress: Record<string, FileProgress> = {};
     info.forEach(f => {
@@ -284,7 +324,7 @@ export function useWebRTC() {
     const newCode = Math.floor(100000 + Math.random() * 900000).toString();
     const peerId = `pxl-transfer-${newCode}`;
 
-    const peer = new Peer(peerId);
+    const peer = new Peer(peerId, PEER_CONFIG);
     peerRef.current = peer;
 
     peer.on('open', (id) => {
@@ -317,7 +357,7 @@ export function useWebRTC() {
     lastSpeedCalcRef.current = { time: Date.now(), bytes: 0 };
     fileAckRef.current = null;
 
-    const peer = new Peer();
+    const peer = new Peer(PEER_CONFIG);
     peerRef.current = peer;
 
     peer.on('open', () => {
@@ -473,11 +513,18 @@ export function useWebRTC() {
       setReceivedFiles(prev => [...prev, { info: fileInfo, blob }]);
       // Intentionally not auto-downloading here to prevent temporary files.
       // The user will explicitly save it from the UI after transfer completes.
-    } catch (e) {
+      await finishFileReceive();
+    } catch (e: any) {
       console.error('Error creating blob or downloading:', e);
+      if (e.name === 'QuotaExceededError' || e.message?.toLowerCase().includes('quota') || e.message?.toLowerCase().includes('space')) {
+        setError('Storage full. Not enough space to process the received file.');
+        setState('error');
+        if (connRef.current && connRef.current.open) {
+          connRef.current.send({ type: 'cancel' });
+        }
+        cleanupConnection();
+      }
     }
-
-    await finishFileReceive();
   };
 
   const updateSpeed = (currentBytes: number) => {
@@ -498,6 +545,10 @@ export function useWebRTC() {
       } else {
         connRef.current.send({ type: 'cancel' });
       }
+    }
+    if (fileWritableRef.current) {
+      fileWritableRef.current.close().catch(() => {});
+      fileWritableRef.current = null;
     }
     cleanupConnection();
     setState('idle');
